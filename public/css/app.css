@@ -407,13 +407,26 @@ a.list-item:hover .li-title { text-decoration: underline; text-underline-offset:
 /* Tela de acesso: painel branco (identidade) + painel preto (formulário) */
 .auth { --auth-dark: #0b0b0b; --auth-field: #141414; --auth-border: #2c2c2c; --auth-text: #f4f2ef; --auth-soft: #a9a6a2;
   position: fixed; inset: 0; display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; background: #fff; }
-.auth-brand { position: relative; background: #fff; min-height: 0; display: flex; align-items: center; justify-content: center; padding: clamp(28px, 4.2vh, 56px) clamp(32px, 4vw, 72px); }
-.auth-brand-inner { height: 100%; width: 100%; max-width: 720px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0; }
-.auth-logo { display: block; flex: none; width: clamp(260px, 24vw, 440px); max-height: 15vh; height: auto; object-fit: contain; }
-.auth-photo { display: block; flex: 0 1 auto; min-height: 0; max-width: 100%; height: auto; max-height: 100%; object-fit: contain; margin: clamp(18px, 3.2vh, 40px) 0 0; }
-.auth-slogan { flex: none; margin: clamp(22px, 3.8vh, 44px) 0 0; text-align: center; font-family: 'Jost', var(--font); font-weight: 300; text-transform: uppercase;
-  letter-spacing: .2em; font-size: clamp(13px, 1.02vw, 18px); line-height: 1.75; color: #1a1a1a; }
+.auth-brand { position: relative; background: #fff; min-height: 0; overflow: hidden; display: flex; align-items: stretch; justify-content: center; padding: clamp(28px, 4.6vh, 56px) clamp(28px, 4vw, 72px) clamp(26px, 4vh, 48px); }
+/* Fotografia como fundo suave: proporção preservada (object-fit: cover, sem distorcer), rostos no terço superior */
+.auth-photo { position: absolute; left: 0; right: 0; top: 13%; width: 100%; height: 100%; object-fit: cover; object-position: 50% 0%; opacity: .3; z-index: 0; pointer-events: none; user-select: none; }
+/* Véu branco: integra a foto ao fundo e garante leitura da logo e da frase */
+.auth-veil { position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: linear-gradient(to bottom, rgba(255,255,255,.9) 0%, rgba(255,255,255,.35) 18%, rgba(255,255,255,0) 28%, rgba(255,255,255,0) 60%, rgba(255,255,255,.5) 80%, rgba(255,255,255,.8) 100%); }
+.auth-brand-inner { position: relative; z-index: 1; height: 100%; width: 100%; max-width: 720px; display: flex; flex-direction: column; align-items: center; min-height: 0; }
+.auth-spacer { flex: 1 1 auto; min-height: 24px; }
+.auth-logo { display: block; flex: none; width: clamp(260px, 25vw, 460px); max-height: 16vh; height: auto; object-fit: contain; }
+.auth-slogan { flex: none; margin: 0; text-align: center; font-family: var(--serif); font-weight: 400; letter-spacing: .005em;
+  font-size: clamp(28px, 2.55vw, 50px); line-height: 1.12; color: #1c1a19; }
 .auth-slogan span { display: block; }
+.auth-contact { flex: none; margin-top: clamp(22px, 4.4vh, 52px); display: flex; flex-direction: column; align-items: center; gap: 8px; font-family: 'Jost', var(--font); font-weight: 400; font-size: clamp(12px, .78vw, 14px); letter-spacing: .04em; color: #5a5450; }
+.auth-contact-row { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 8px; color: inherit; }
+.auth-contact .icon { width: 17px; height: 17px; stroke-width: 1.5; color: #1a1a1a; margin-right: 2px; }
+.auth-contact a { color: inherit; text-decoration: none; border-bottom: 1px solid transparent; transition: color .15s, border-color .15s; }
+.auth-contact a:hover, .auth-contact a:hover span { color: #111; border-color: #111; }
+a.auth-contact-row:hover { border-color: transparent; } a.auth-contact-row:hover span { border-bottom: 1px solid #111; }
+.auth-contact a:focus-visible { outline: 2px solid #b9a489; outline-offset: 3px; }
+.auth-dot { color: #b5aea8; }
 .auth-lang { position: absolute; top: clamp(20px, 3.4vh, 36px); right: clamp(20px, 2.6vw, 40px); display: flex; align-items: center; gap: 10px; font-size: 12px; letter-spacing: .14em; color: #bdbdbd; z-index: 2; }
 .auth-lang button { border: 0; background: none; padding: 4px 2px; font: inherit; letter-spacing: inherit; color: #9a9a9a; cursor: pointer; transition: color .15s; }
 .auth-lang button:hover { color: #111; }
@@ -531,11 +544,15 @@ a.list-item:hover .li-title { text-decoration: underline; text-underline-offset:
 /* Tela de acesso — tablet em pé e celular: identidade em cima, formulário embaixo */
 @media (max-width: 900px) {
   .auth { position: static; min-height: 100vh; grid-template-columns: 1fr; overflow: visible; }
-  .auth-brand { padding: 56px 24px 32px; }
-  .auth-brand-inner { height: auto; }
-  .auth-logo { width: min(300px, 76vw); max-height: none; }
-  .auth-photo { width: min(420px, 84vw); max-height: 52vh; margin-top: 26px; }
-  .auth-slogan { font-size: 12.5px; letter-spacing: .18em; margin-top: 24px; }
+  .auth-brand { padding: 56px 22px 30px; min-height: 82vh; }
+  .auth-logo { width: min(290px, 74vw); max-height: none; }
+  .auth-slogan { font-size: 25px; }
+  .auth-photo { top: 11%; }
+  .auth-veil { background: linear-gradient(to bottom, rgba(255,255,255,.9) 0%, rgba(255,255,255,.4) 18%, rgba(255,255,255,0) 34%, rgba(255,255,255,0) 50%, rgba(255,255,255,.6) 72%, rgba(255,255,255,.9) 100%); }
+  .auth-contact { font-size: 13px; margin-top: 22px; gap: 12px; }
+  .auth-contact-row:first-child { flex-direction: column; gap: 7px; }
+  .auth-contact-row:first-child .icon { margin: 0 0 2px; }
+  .auth-dot { display: none; }
   .auth-lang { top: 18px; right: 18px; }
   .auth-panel { padding: 48px 22px 56px; overflow: hidden; }
   .auth-deco-circle { width: 360px; height: 360px; top: -220px; right: -160px; }

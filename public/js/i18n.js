@@ -2,6 +2,7 @@
 const DICT = {
   pt: {
     slogan: ['Criando ambientes marcantes', 'que contam a sua história'],
+    contactWa: 'Fale conosco pelo WhatsApp', waMsg: 'Olá! Gostaria de falar com o escritório Carla Nogueira & Irineu Junior.',
     welcome: 'Bem-vindo(a)', signIn: 'Entrar', email: 'E-mail', password: 'Senha', emailPh: 'seu@e-mail.com',
     remember: 'Manter conectado', forgot: 'Esqueci minha senha', clientNote: ['Clientes do escritório também acessam por aqui', 'a sua Área do Cliente.'],
     showPw: 'Mostrar senha', hidePw: 'Ocultar senha',
@@ -14,6 +15,7 @@ const DICT = {
   },
   en: {
     slogan: ['Designs that reflect', 'your story'],
+    contactWa: 'Talk to us on WhatsApp', waMsg: 'Hello! I would like to talk to Carla Nogueira & Irineu Junior studio.',
     welcome: 'Welcome', signIn: 'Sign in', email: 'E-mail', password: 'Password', emailPh: 'you@email.com',
     remember: 'Keep me signed in', forgot: 'Forgot my password', clientNote: ['Our clients also sign in here', 'to access their Client Area.'],
     showPw: 'Show password', hidePw: 'Hide password',

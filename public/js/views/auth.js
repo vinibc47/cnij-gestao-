@@ -2,6 +2,11 @@ import { api, html, raw, toHTML, toast, fail, modal, el, $ } from '../lib.js';
 
 import { t, getLang, setLang } from '../i18n.js';
 
+// Contatos exibidos na capa (Instagram do escritório e dos sócios, WhatsApp)
+const IG = ['carlaeirineuarquitetura', 'carlanogueirabarbosa', 'irineujuniorarquiteto'];
+const igIcon = raw('<svg class="icon" viewBox="0 0 24 24" aria-label="Instagram"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4.2"/><circle cx="17.4" cy="6.6" r="1" fill="currentColor" stroke="none"/></svg>');
+const waIcon = raw('<svg class="icon" viewBox="0 0 24 24" aria-label="WhatsApp"><path d="M3.6 20.4l1.2-4.3A8.6 8.6 0 1 1 8 19.3z"/><path d="M9 8.3c.2-.5.5-.5.8-.5h.5c.2 0 .4.1.5.4l.7 1.7c.1.2 0 .5-.1.6l-.5.6c-.1.2-.1.4 0 .5.6 1 1.4 1.8 2.4 2.4.2.1.4.1.5 0l.6-.6c.2-.2.4-.2.6-.1l1.7.8c.2.1.3.3.3.5v.4c0 .4-.2.8-.6 1-.6.3-1.4.4-2.2.1a9.4 9.4 0 0 1-5-4.8c-.4-.9-.4-1.9 0-2.6z" fill="currentColor" stroke="none"/></svg>');
+
 // ---------- Estrutura comum das telas de acesso (login, nova senha, primeiro acesso) ----------
 function shell(formMarkup) {
   const L = getLang();
@@ -12,10 +17,16 @@ function shell(formMarkup) {
         <button type="button" data-lang="pt" class="${L === 'pt' ? 'on' : ''}" aria-pressed="${L === 'pt'}">PT</button><span aria-hidden="true">|</span>
         <button type="button" data-lang="en" class="${L === 'en' ? 'on' : ''}" aria-pressed="${L === 'en'}">EN</button>
       </div>
+      <img class="auth-photo" src="/img/socios.jpg" width="731" height="942" alt="Carla Nogueira e Irineu Junior">
+      <span class="auth-veil" aria-hidden="true"></span>
       <div class="auth-brand-inner">
         <img class="auth-logo" src="/img/logo.png" width="1016" height="353" alt="Carla Nogueira & Irineu Junior — Arquitetura | Interiores">
-        <img class="auth-photo" src="/img/socios.jpg" width="772" height="942" alt="Carla Nogueira e Irineu Junior">
+        <span class="auth-spacer" aria-hidden="true"></span>
         <p class="auth-slogan"><span>${s1}</span><span>${s2}</span></p>
+        <div class="auth-contact">
+          <div class="auth-contact-row">${igIcon}${IG.map((h, i) => html`${i ? html`<span class="auth-dot" aria-hidden="true">·</span>` : ''}<a href="https://www.instagram.com/${h}/" target="_blank" rel="noopener" title="Instagram @${h}">@${h}</a>`)}</div>
+          <a class="auth-contact-row" href="https://wa.me/5567982077556?text=${encodeURIComponent(t('waMsg'))}" target="_blank" rel="noopener" title="${t('contactWa')}">${waIcon}<span>(67) 98207-7556</span></a>
+        </div>
       </div>
     </section>
     <section class="auth-panel"><span class="auth-deco-circle" aria-hidden="true"></span><span class="auth-deco-square" aria-hidden="true"></span>${formMarkup}</section>

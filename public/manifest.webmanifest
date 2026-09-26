@@ -1,2 +1,2 @@
-{ "name": "CN&IJ Gestão", "short_name": "CN&IJ", "start_url": "/", "display": "standalone", "background_color": "#ffffff", "theme_color": "#ffffff",
-  "icons": [{ "src": "/img/icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
+{ "name": "Carla Nogueira & Irineu Junior — Gestão", "short_name": "CN & IJ", "start_url": "/", "display": "standalone", "background_color": "#ffffff", "theme_color": "#ffffff",
+  "icons": [{ "src": "/img/icon-512.png", "sizes": "512x512", "type": "image/png" }, { "src": "/img/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }] }
