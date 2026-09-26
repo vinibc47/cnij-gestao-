@@ -1,0 +1,5 @@
+#!/bin/bash
+# Cole este texto no campo "cloud-init" ao criar o servidor na Oracle Cloud.
+# Troque SEU-USUARIO pelo seu nome de usuário do GitHub (e o nome do repositório, se for diferente).
+REPO="SEU-USUARIO/cnij-gestao"
+curl -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/instalar-servidor.sh" | bash -s -- "$REPO"

@@ -1,0 +1,2 @@
+{ "name": "CN&IJ Gestão", "short_name": "CN&IJ", "start_url": "/", "display": "standalone", "background_color": "#ffffff", "theme_color": "#ffffff",
+  "icons": [{ "src": "/img/icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
