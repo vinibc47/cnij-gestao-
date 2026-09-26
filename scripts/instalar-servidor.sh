@@ -38,8 +38,11 @@ rm -rf $BASE/app && mv $BASE/app.new $BASE/app
 # Endereço do site: domínio próprio ou um endereço gratuito baseado no IP (sslip.io)
 IP=$(curl -fsS https://api.ipify.org || curl -fsS ifconfig.me)
 if [ -z "$DOMAIN" ] && [ -f $BASE/.domain ]; then DOMAIN=$(cat $BASE/.domain); fi
-[ -z "$DOMAIN" ] && DOMAIN="$(echo "$IP" | tr . -).sslip.io"
+SSLIP="$(echo "$IP" | tr . -).sslip.io"
+[ -z "$DOMAIN" ] && DOMAIN="$SSLIP"
 echo "$DOMAIN" > $BASE/.domain
+# Endereços atendidos: o domínio principal e sempre o endereço provisório (sslip.io) como reserva
+SITES="$DOMAIN"; [ "$DOMAIN" != "$SSLIP" ] && SITES="$DOMAIN, $SSLIP"
 
 if [ ! -f $BASE/.env ]; then
 cat > $BASE/.env <<ENV
@@ -54,7 +57,7 @@ else
 fi
 
 cat > $BASE/Caddyfile <<CADDY
-$DOMAIN {
+$SITES {
   encode gzip
   request_body {
     max_size 40MB
@@ -81,7 +84,7 @@ volumes:
   caddy_config:
 COMPOSE
 
-cd $BASE && docker compose up -d --build
+cd $BASE && docker compose up -d --build && docker compose restart caddy
 
 # Atalho para atualizar depois:  sudo cnij-atualizar
 cat > /usr/local/bin/cnij-atualizar <<UPD
