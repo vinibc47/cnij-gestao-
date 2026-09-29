@@ -173,7 +173,9 @@ R.work_phases = {
     F('work_id', 'Obra', 'ref', { ref: 'works', required: true }), F('name', 'Fase', 'text', { required: true }),
     F('status', 'Status', 'select', { list: 'PHASE_STATUS', default: 'nao_iniciado' }), F('progress', 'Executado (%)', 'percent'),
     F('start_date', 'Início', 'date'), F('due_date', 'Término previsto', 'date'),
-    F('supplier_id', 'Fornecedor', 'ref', { ref: 'suppliers' }), F('position', 'Ordem', 'number'),
+    F('supplier_id', 'Fornecedor', 'ref', { ref: 'suppliers' }), F('responsible', 'Responsável pela etapa', 'text'),
+    F('position', 'Ordem', 'number'),
+    F('pending', 'Pendências da etapa', 'textarea', { wide: true }), F('next_action', 'Próxima ação', 'textarea', { wide: true }),
     F('notes', 'Observações', 'textarea', { wide: true }),
   ],
   read: staff, scope: scopeBy('w.project_id'),
@@ -299,7 +301,7 @@ R.proposals = {
   select: `SELECT pr.*, c.name AS client_name, u.name AS responsible_name, p.name AS project_name,
            CASE WHEN pr.valid_until < date('now','localtime') AND pr.status IN ('enviada','visualizada','negociacao') THEN 1 ELSE 0 END AS is_expired
            FROM proposals pr LEFT JOIN clients c ON c.id = pr.client_id LEFT JOIN users u ON u.id = pr.responsible_id LEFT JOIN projects p ON p.id = pr.project_id`,
-  search: ['pr.title', 'pr.number', 'c.name'], sort: 'pr.created_at DESC', archivable: true,
+  search: ['pr.title', 'pr.number', 'c.name', 'pr.contact_name', 'pr.address'], sort: 'pr.created_at DESC', archivable: true,
   fields: [
     F('number', 'Número', 'text', { readonly: true }), F('client_id', 'Cliente', 'ref', { ref: 'clients', required: true, filter: true }),
     F('title', 'Projeto / escopo', 'text', { required: true }), F('project_type', 'Tipo de projeto', 'option', { opt: 'projeto_tipo' }),
@@ -550,7 +552,8 @@ R.expenses.presets = {
   abertas: "x.status IN ('previsto','a_pagar','vencido')", vencidas: "x.status = 'vencido'", pagas: "x.status = 'pago'",
   mes: `substr(x.due_date,1,7) = strftime('%Y-%m', ${T})`,
 };
-R.proposals.presets = { abertas: "x.status IN ('elaboracao','enviada','visualizada','negociacao')", aguardando: "x.status IN ('enviada','visualizada','negociacao')" };
+R.proposals.presets = { abertas: "x.status IN ('elaboracao','enviada')", aguardando: "x.status = 'enviada'", honorarios: "x.kind = 'honorarios'", simples: "COALESCE(x.kind,'simples') <> 'honorarios'",
+  honorarios_abertas: "x.kind = 'honorarios' AND x.status IN ('elaboracao','enviada')", simples_abertas: "COALESCE(x.kind,'simples') <> 'honorarios' AND x.status IN ('elaboracao','enviada')" };
 R.contracts.presets = { aguardando: "x.status = 'aguardando_assinatura'", ativos: "x.status = 'ativo'" };
 R.works.presets = { andamento: "x.status = 'em_andamento'", concluidas: "x.status = 'concluida'" };
 R.documents.presets = {

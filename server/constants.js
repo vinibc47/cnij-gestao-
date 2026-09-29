@@ -45,10 +45,29 @@ module.exports = {
     ['concluida', 'Concluída', 'success'],
   ]),
   PROPOSAL_STATUS: S([
-    ['elaboracao', 'Em elaboração', 'neutral'], ['enviada', 'Enviada', 'info'], ['visualizada', 'Visualizada', 'info'],
-    ['negociacao', 'Negociação', 'warning'], ['aprovada', 'Aprovada', 'success'], ['recusada', 'Recusada', 'danger'],
-    ['expirada', 'Expirada', 'muted'],
+    ['elaboracao', 'Rascunho', 'neutral'], ['enviada', 'Enviada', 'info'], ['aprovada', 'Aprovada', 'success'],
+    ['recusada', 'Recusada', 'danger'], ['expirada', 'Expirada', 'muted'],
   ]),
+  // Tipos de serviço das propostas de honorários e dos modelos de contrato
+  SERVICE_TYPES: S([
+    ['arquitetonico', 'Projeto arquitetônico'], ['interiores', 'Projeto de interiores'],
+    ['arq_interiores', 'Projeto arquitetônico e de interiores'], ['acompanhamento', 'Acompanhamento de obra'],
+    ['visita', 'Visita técnica avulsa'],
+  ]),
+  WORK_TYPES: S([
+    ['residencial', 'Residencial'], ['comercial', 'Comercial'], ['corporativo', 'Corporativo / escritório'], ['clinica', 'Clínica'],
+    ['reforma', 'Reforma'], ['construcao_nova', 'Construção nova'], ['outro', 'Outro'],
+  ]),
+  SITE_SITUATION: S([
+    ['nao_iniciada', 'Não iniciada', 'neutral'], ['em_andamento', 'Em andamento', 'info'], ['aguardando_cliente', 'Aguardando cliente', 'warning'],
+    ['aguardando_fornecedor', 'Aguardando fornecedor', 'warning'], ['pausada', 'Pausada', 'muted'], ['finalizacao', 'Em finalização', 'accent'],
+    ['concluida', 'Concluída', 'success'],
+  ]),
+  EXECUTIVES_STATUS: S([['nao_entregues', 'Não entregues', 'danger'], ['parcial', 'Parcialmente entregues', 'warning'], ['entregues', 'Entregues', 'success']]),
+  EXECUTIVE_ITEM_STATUS: S([['nao_entregue', 'Não entregue', 'neutral'], ['em_elaboracao', 'Em elaboração', 'info'], ['em_revisao', 'Em revisão', 'warning'], ['entregue', 'Entregue', 'success']]),
+  PENDING_STATUS: S([['aberta', 'Em aberto', 'warning'], ['resolvida', 'Resolvida', 'success']]),
+  APPROVAL_STATUS: S([['pendente', 'Aguardando cliente', 'warning'], ['aprovado', 'Aprovado', 'success'], ['recusado', 'Não aprovado', 'danger']]),
+  REMINDER_STATUS: S([['pendente', 'A enviar', 'warning'], ['enviado', 'Enviado', 'success']]),
   CONTRACT_STATUS: S([
     ['elaboracao', 'Em elaboração', 'neutral'], ['aguardando_assinatura', 'Aguardando assinatura', 'warning'],
     ['ativo', 'Ativo', 'info'], ['concluido', 'Concluído', 'success'], ['cancelado', 'Cancelado', 'muted'],

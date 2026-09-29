@@ -15,7 +15,7 @@ export async function api(path, { method = 'GET', body, raw } = {}) {
   try { data = await r.json(); } catch { data = null; }
   if (!r.ok) {
     if (r.status === 401 && !path.startsWith('/auth')) { window.dispatchEvent(new CustomEvent('auth:expired')); }
-    const e = new Error((data && data.error) || 'Falha na comunicação com o servidor.'); e.status = r.status; throw e;
+    const e = new Error((data && data.error) || 'Falha na comunicação com o servidor.'); e.status = r.status; e.data = data; throw e;
   }
   return data;
 }
@@ -524,3 +524,96 @@ export function comments(entity, id) {
 
 export function emptyState(text, action) { return html`<div class="empty sm">${text}${action ? html`<div class="mt-8">${action}</div>` : ''}</div>`; }
 export const waLink = (n) => (n ? `https://wa.me/55${String(n).replace(/\D/g, '').replace(/^55/, '')}` : null);
+
+// ------------------------------ PDFs e utilidades de documentos ------------------------------
+// Abre o PDF numa nova aba (visualizar, baixar ou imprimir). Antes confere pendências no servidor
+// e, se houver alterações não salvas, oferece salvá-las primeiro.
+export async function openPdf(url, { dirty = false, save, draftUrl } = {}) {
+  if (dirty && save) {
+    const choice = await new Promise((res) => modal({ title: 'Alterações não salvas', body: html`<p class="muted" style="margin:0">Existem alterações que ainda não foram salvas. O PDF é gerado com os dados salvos.</p>`,
+      actions: [{ label: 'Cancelar', value: 'cancel' }, { label: 'Usar versão salva', value: 'saved' }, { label: 'Salvar e gerar PDF', primary: true, value: 'save' }], onClose: (v) => res(v || 'cancel') }));
+    if (choice === 'cancel') return;
+    if (choice === 'save') { const okSave = await save(); if (okSave === false) return; }
+  }
+  const w = window.open('', '_blank');
+  if (w) { try { w.document.title = 'Gerando PDF…'; w.document.body.innerHTML = '<p style="font:14px system-ui,sans-serif;color:#777;padding:32px">Gerando PDF…</p>'; } catch { /* aba bloqueada */ } }
+  try {
+    const sep = url.includes('?') ? '&' : '?';
+    const r = await api.get(`${url}${sep}check=1`);
+    if (r && r.ok === false) { if (w) w.close(); return pdfProblems(r.problems, draftUrl); }
+    if (w) w.location.href = '/api' + url; else location.href = '/api' + url;
+  } catch (e) { if (w) w.close(); fail(e); }
+}
+export function pdfProblems(problems, draftUrl) {
+  modal({ title: 'Complete antes de gerar', body: html`<p class="muted small" style="margin-top:0">O documento não foi gerado porque há informações pendentes:</p>
+    <ul class="problems">${(problems || []).map((p) => html`<li>${p}</li>`)}</ul>${draftUrl ? html`<p class="small muted">Você pode visualizar um rascunho (com marca d'água) para conferir o texto.</p>` : ''}`,
+  actions: [...(draftUrl ? [{ label: 'Ver rascunho', fn: () => { window.open('/api' + draftUrl, '_blank'); } }] : []), { label: 'Entendi', primary: true }] });
+}
+// Trata erros 400 com lista de pendências vindas do servidor
+export function failProblems(e) { if (e && e.data && e.data.problems) pdfProblems(e.data.problems); else fail(e); }
+export async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {
+    const t = document.createElement('textarea'); t.value = text; t.style.position = 'fixed'; t.style.opacity = '0'; document.body.appendChild(t); t.select();
+    let okc = false; try { okc = document.execCommand('copy'); } catch { okc = false; } t.remove(); return okc;
+  }
+}
+export const brl2 = (n) => Number(n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+export const parseNum = (v) => { if (v === '' || v === null || v === undefined) return 0; const s = String(v).trim(); const n = Number(s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s); return Number.isFinite(n) ? n : 0; };
+
+// Editor de linhas (tabela editável) — usado em parcelas, etapas, executivos, pendências, itens de orçamento.
+// columns: [{ key, label, type: text|textarea|date|money|number|select, options:[{value,label}], w: '1fr', placeholder }]
+export function rowsEditor({ columns, rows = [], onChange, addLabel = 'Adicionar linha', empty = 'Nenhum item.', total, reorder = true }) {
+  let data = rows.map((r) => ({ ...r }));
+  const box = el(html`<div class="rows-ed"><div class="re-head" style="grid-template-columns:${columns.map((c) => c.w || '1fr').join(' ')} 64px">${columns.map((c) => html`<span>${c.label}</span>`)}<span></span></div><div class="re-body"></div>
+    <div class="re-foot"><button type="button" class="btn sm" data-add>${icon('plus', 'sm')} ${addLabel}</button><span class="grow"></span><span class="re-total small"></span></div></div>`);
+  const body = box.querySelector('.re-body');
+  const input = (c, v, i) => {
+    const val = v ?? '';
+    const attrs = `data-k="${c.key}" data-i="${i}" aria-label="${esc(c.label)}"`;
+    switch (c.type) {
+      case 'select': return `<select class="input" ${attrs}><option value="">—</option>${c.options.map((o) => `<option value="${esc(o.value)}" ${String(o.value) === String(val) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
+      case 'date': return `<input class="input" type="date" ${attrs} value="${esc(String(val).slice(0, 10))}">`;
+      case 'money': return `<div class="money-input"><span>R$</span><input class="input" type="text" inputmode="decimal" ${attrs} value="${val === '' ? '' : esc(brl2(val))}"></div>`;
+      case 'number': return `<input class="input" type="text" inputmode="decimal" ${attrs} value="${esc(String(val).replace('.', ','))}">`;
+      case 'textarea': return `<textarea class="input" rows="2" ${attrs} placeholder="${esc(c.placeholder || '')}">${esc(val)}</textarea>`;
+      default: return `<input class="input" type="text" ${attrs} value="${esc(val)}" placeholder="${esc(c.placeholder || '')}">`;
+    }
+  };
+  const render = () => {
+    body.innerHTML = data.length ? data.map((r, i) => `<div class="re-row" style="grid-template-columns:${columns.map((c) => c.w || '1fr').join(' ')} 64px">${columns.map((c) => `<label class="re-cell"><span class="re-l">${esc(c.label)}</span>${c.render ? c.render(r, i) : input(c, r[c.key], i)}</label>`).join('')}
+      <div class="re-act">${reorder ? `<button type="button" class="icon-btn" data-up="${i}" title="Subir">${toHTML(icon('out', 'sm'))}</button>` : ''}<button type="button" class="icon-btn" data-rm="${i}" title="Remover">${toHTML(icon('x', 'sm'))}</button></div></div>`).join('') : `<div class="muted small re-empty">${esc(empty)}</div>`;
+    upd(false);
+  };
+  const upd = (notify = true) => { const t = box.querySelector('.re-total'); if (total) t.innerHTML = toHTML(total(data)); if (notify && onChange) onChange(data); };
+  const read = (e) => {
+    const t = e.target.closest('[data-k]'); if (!t) return;
+    const c = columns.find((x) => x.key === t.dataset.k); const i = +t.dataset.i;
+    data[i][c.key] = c.type === 'money' || c.type === 'number' ? (t.value.trim() === '' ? '' : parseNum(t.value)) : t.value;
+    upd();
+  };
+  body.addEventListener('input', read); body.addEventListener('change', (e) => { read(e); const t = e.target.closest('[data-k]'); if (t) { const c = columns.find((x) => x.key === t.dataset.k); if (c.type === 'money' && t.value.trim() !== '') t.value = brl2(parseNum(t.value)); } });
+  box.addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-rm]'); const up = e.target.closest('[data-up]');
+    if (rm) { data.splice(+rm.dataset.rm, 1); render(); upd(); }
+    if (up) { const i = +up.dataset.up; if (i > 0) { [data[i - 1], data[i]] = [data[i], data[i - 1]]; render(); upd(); } }
+    if (e.target.closest('[data-add]')) { data.push(Object.fromEntries(columns.map((c) => [c.key, c.default !== undefined ? (typeof c.default === 'function' ? c.default(data) : c.default) : '']))); render(); upd(); const last = body.lastElementChild && body.lastElementChild.querySelector('input,select,textarea'); if (last) last.focus(); }
+  });
+  render();
+  box.rows = { get: () => data.map((r) => ({ ...r })), set: (r) => { data = r.map((x) => ({ ...x })); render(); }, refresh: () => upd(false) };
+  return box;
+}
+
+// Marca um formulário como "com alterações não salvas" e avisa ao sair da página
+export function dirtyTracker(root) {
+  const st = { dirty: false };
+  const mark = () => { st.dirty = true; root.classList.add('is-dirty'); };
+  root.addEventListener('input', mark); root.addEventListener('change', mark);
+  const beforeUnload = (e) => { if (st.dirty) { e.preventDefault(); e.returnValue = ''; } };
+  window.addEventListener('beforeunload', beforeUnload);
+  const onHash = () => { window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('hashchange', onHash); };
+  window.addEventListener('hashchange', onHash);
+  st.clean = () => { st.dirty = false; root.classList.remove('is-dirty'); };
+  st.mark = mark;
+  return st;
+}

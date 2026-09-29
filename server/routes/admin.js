@@ -81,11 +81,16 @@ router.get('/users/:id/projects', wrap((req, res) => {
 
 // ------------------------------ PARÂMETROS ------------------------------
 const SETTINGS = ['office_name', 'office_tagline', 'office_doc', 'office_address', 'office_phone', 'office_email', 'opening_balance', 'opening_balance_date',
-  'alert_days_payments', 'alert_days_tasks', 'alert_days_deliveries', 'alert_days_documents', 'alert_days_proposals', 'recurring_months_ahead', 'backup_keep'];
-router.get('/settings', P.requireAdmin, (req, res) => res.json(Object.fromEntries(SETTINGS.map((k) => [k, getSetting(k, '')]))));
+  'alert_days_payments', 'alert_days_tasks', 'alert_days_deliveries', 'alert_days_documents', 'alert_days_proposals', 'recurring_months_ahead', 'backup_keep',
+  'office_city', 'office_timezone', 'office_pix_key', 'office_pix_type', 'office_pix_name', 'office_pix_bank', 'contractor_name', 'contractor_doc', 'contractor_address', 'contractor_registry',
+  'proposal_validity_days', 'whatsapp_template', 'whatsapp_template_overdue'];
+const TIMEZONES = ['America/Campo_Grande', 'America/Cuiaba', 'America/Sao_Paulo', 'America/Manaus', 'America/Porto_Velho', 'America/Rio_Branco', 'America/Belem', 'America/Fortaleza', 'America/Recife', 'America/Bahia', 'America/Noronha'];
+router.get('/settings', P.requireAdmin, (req, res) => res.json({ ...Object.fromEntries(SETTINGS.map((k) => [k, getSetting(k, '')])), office_logo: getSetting('office_logo', ''), _timezones: TIMEZONES, _wa_defaults: { today: require('../services/docs').WA_TODAY, overdue: require('../services/docs').WA_OVERDUE } }));
 router.put('/settings', P.requireAdmin, wrap((req, res) => {
   const ch = {};
-  for (const k of SETTINGS) if (k in req.body) { ch[k] = [getSetting(k), req.body[k]]; setSetting(k, req.body[k]); }
+  if ('office_timezone' in req.body && req.body.office_timezone && !TIMEZONES.includes(req.body.office_timezone)) throw new HttpError(400, 'Fuso horário inválido.');
+  for (const k of SETTINGS) if (k in req.body) { const v = typeof req.body[k] === 'string' ? req.body[k].replace(/\r\n/g, '\n').slice(0, 8000) : req.body[k]; ch[k] = [getSetting(k), v]; setSetting(k, v); }
+  if (req.body.office_timezone && !process.env.TZ_LOCK) process.env.TZ = req.body.office_timezone;
   audit(req, 'update', 'settings', null, 'Configurações alteradas', ch);
   automation.runAutomations(true);
   res.json({ ok: true });

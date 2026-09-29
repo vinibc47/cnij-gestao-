@@ -66,14 +66,14 @@ function renderShell() {
   const u = S.user;
   root.innerHTML = toHTML(html`<div class="app">
     <aside class="sidebar">
-      <a class="brand" href="#/" title="Início"><img class="brand-logo" src="/img/logo.png" width="1016" height="353" alt="Carla Nogueira & Irineu Junior — Arquitetura | Interiores"></a>
+      <a class="brand" href="#/" title="Início"><img class="brand-logo" src="/logo" width="1016" height="353" alt="Carla Nogueira & Irineu Junior — Arquitetura | Interiores"></a>
       <nav class="nav">${nav.map(([m, path, label, ic], i) => html`${i === 10 ? html`<div class="sep"></div>` : ''}<a href="#/${path}" data-nav="${path}" title="${label}">${icon(ic)}<span class="lbl">${label}</span><span class="count hidden" data-count="${path}"></span></a>`)}</nav>
       <div class="side-user">${avatar(u)}<div class="who"><b class="ellipsis">${u.name}</b><span class="small muted">${({ admin: 'Administrador', gestor: 'Gestor', colaborador: 'Colaborador', estagiario: 'Estagiário' })[u.role]}</span></div>
         <button class="icon-btn" data-user title="Minha conta">${icon('more')}</button></div>
     </aside>
     <div class="main">
       <header class="topbar">
-        <a class="m-brand mobile-only" href="#/"><img class="brand-logo" src="/img/logo.png" width="1016" height="353" alt="Carla Nogueira & Irineu Junior"></a>
+        <a class="m-brand mobile-only" href="#/"><img class="brand-logo" src="/logo" width="1016" height="353" alt="Carla Nogueira & Irineu Junior"></a>
         <div class="search">${icon('search')}<input id="gsearch" placeholder="Pesquisar clientes, projetos, fornecedores, tarefas…" autocomplete="off"><kbd>/</kbd><div class="search-results hidden"></div></div>
         <div class="top-actions">
           <button class="icon-btn" data-notif title="Notificações">${icon('bell')}<span class="dot hidden"></span></button>
@@ -107,7 +107,7 @@ export async function refreshBadges() {
     const d = await api.get('/dashboard');
     const set = (k, v, soft) => { const c = $(`[data-count="${k}"]`); if (c) { c.textContent = v; c.classList.toggle('hidden', !v); c.classList.toggle('soft', !!soft); } };
     set('tarefas', d.counts.tasks_late, true);
-    if (d.finance) set('financeiro', d.finance.overdue_in.count + d.finance.overdue_out.count, true);
+    if (d.finance) set('financeiro', d.finance.overdue_in.count + d.finance.overdue_out.count + (d.finance.reminders || 0), true);
     set('contratos', d.counts.contracts_waiting);
     set('propostas', d.counts.proposals_waiting);
   } catch { /* silencioso */ }
@@ -134,7 +134,7 @@ export function quickMenu(anchor) {
   if (R.incomes) items.push({ label: 'Nova receita', icon: 'in', fn: async () => (await import('./views/finance.js')).newEntry('incomes', {}, rerender) });
   if (R.expenses) items.push({ label: 'Nova despesa', icon: 'out', fn: async () => (await import('./views/finance.js')).newEntry('expenses', {}, rerender) });
   if (R.events) items.push({ label: 'Nova reunião', icon: 'calendar', fn: () => openForm('events', { values: { type: 'reuniao' }, onSaved: rerender }) });
-  if (R.proposals) items.push({ label: 'Nova proposta', icon: 'proposal', fn: () => openForm('proposals', { onSaved: rerender }) });
+  if (R.proposals) items.push({ label: 'Nova proposta (orçamento de obra)', icon: 'proposal', fn: () => go('#/propostas?nova=1') });
   if (R.work_logs) items.push({ label: 'Registro no diário de obra', icon: 'diary', fn: () => openForm('work_logs', { onSaved: rerender }) });
   if (R.time_entries) items.push({ label: 'Lançar horas', icon: 'clock', fn: () => openForm('time_entries', { onSaved: rerender }) });
   menu(anchor, [{ header: 'Ações rápidas' }, ...items]);

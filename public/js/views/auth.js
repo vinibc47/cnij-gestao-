@@ -20,7 +20,7 @@ function shell(formMarkup) {
       <img class="auth-photo" src="/img/socios.jpg" width="731" height="942" alt="Carla Nogueira e Irineu Junior">
       <span class="auth-veil" aria-hidden="true"></span>
       <div class="auth-brand-inner">
-        <img class="auth-logo" src="/img/logo.png" width="1016" height="353" alt="Carla Nogueira & Irineu Junior — Arquitetura | Interiores">
+        <img class="auth-logo" src="/logo" width="1016" height="353" alt="Carla Nogueira & Irineu Junior — Arquitetura | Interiores">
         <span class="auth-spacer" aria-hidden="true"></span>
         <p class="auth-slogan"><span>${s1}</span><span>${s2}</span></p>
         <div class="auth-contact">

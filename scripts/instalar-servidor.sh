@@ -49,7 +49,7 @@ cat > $BASE/.env <<ENV
 APP_URL=https://$DOMAIN
 COOKIE_SECURE=1
 TRUST_PROXY=1
-TZ=America/Cuiaba
+TZ=America/Campo_Grande
 MAX_UPLOAD_MB=30
 ENV
 else

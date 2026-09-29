@@ -94,6 +94,18 @@ Senhas com bcrypt · sessão em cookie HttpOnly/SameSite (Secure em HTTPS) · bl
 
 ---
 
+### Documentos, contratos e cobranças
+
+- **Propostas › Orçamento de obra** — propostas de honorários com modelo por tipo de serviço (projeto arquitetônico, interiores, arquitetônico e interiores, acompanhamento de obra, visita técnica avulsa), campos adaptados ao serviço, entrada e parcelas com conferência do total, status (Rascunho, Enviada, Aprovada, Recusada, Expirada), registro de aprovação, duplicar e PDF.
+- **Contratos** — modelos preenchíveis por serviço, “Gerar contrato a partir da proposta”, dados das partes, texto editável e **emissões versionadas** (cada PDF emitido guarda o texto e os dados usados; alterar o modelo não muda contratos já emitidos).
+- **Parcelas no financeiro** — a partir da proposta aprovada ou do contrato, com conferência para não duplicar lançamentos.
+- **Lembretes de cobrança (Financeiro › Lembretes)** — no dia do vencimento de cada parcela em aberto o servidor prepara a mensagem de WhatsApp (editar, copiar, abrir no WhatsApp, marcar como enviado). Nada é enviado automaticamente.
+- **Projeto › Informações da obra** — ficha de acompanhamento (executivos, pendências, aprovações, próximas etapas) e relatório em PDF.
+- **Obra › Orçamento de execução** e **PDF das etapas da obra**.
+- **Configurações** — Escritório (dados, logo, Pix, contratado, fuso horário), Modelos de documentos (com histórico de versões) e Cobrança (texto das mensagens).
+- PDFs em A4 gerados no servidor (pdfmake), com texto selecionável, logo, rodapé paginado e cabeçalhos de tabela repetidos.
+- Testes: `npm test` (regras gerais + fluxo proposta → contrato → parcelas → lembrete → PDFs).
+
 ## 4. Backup
 - Automático: um por dia em `backups/` (configurável).
 - Manual: *Configurações › Backup e dados* ou `npm run backup`.

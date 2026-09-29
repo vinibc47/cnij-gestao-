@@ -1,6 +1,6 @@
-import { S, api, html, el, toHTML, icon, date, datetime, bytes, modal, toast, fail, table, avatar, label, refOptions, confirmDialog, isAdmin, $$ } from '../lib.js';
+import { S, api, html, el, toHTML, icon, date, datetime, bytes, modal, toast, fail, table, avatar, label, refOptions, confirmDialog, isAdmin, badge, dirtyTracker, $$ } from '../lib.js';
 
-const SECS = [['escritorio', 'Escritório'], ['usuarios', 'Usuários e permissões'], ['listas', 'Categorias e listas'], ['etapas', 'Modelos de etapas'], ['alertas', 'Alertas e automações'], ['backup', 'Backup e dados'], ['auditoria', 'Registro de alterações']];
+const SECS = [['escritorio', 'Escritório'], ['modelos', 'Modelos de documentos'], ['cobranca', 'Cobrança (WhatsApp)'], ['usuarios', 'Usuários e permissões'], ['listas', 'Categorias e listas'], ['etapas', 'Modelos de etapas'], ['alertas', 'Alertas e automações'], ['backup', 'Backup e dados'], ['auditoria', 'Registro de alterações']];
 const ROLE_DESC = { admin: 'Acesso completo ao sistema.', gestor: 'Projetos, obras, clientes, tarefas, comercial. Financeiro somente se autorizado.', colaborador: 'Projetos e obras em que participa e tarefas atribuídas.', estagiario: 'Somente projetos autorizados e suas tarefas.', cliente: 'Área do Cliente.' };
 
 export default async function (ctx) {
@@ -21,8 +21,65 @@ const settingsForm = async (body, keys, ctx) => {
 
 const T = {
   async escritorio(body, ctx) {
-    await settingsForm(body, [['office_name', 'Nome do escritório', 'wide'], ['office_tagline', 'Assinatura', 'wide'], ['office_doc', 'CNPJ'], ['office_phone', 'Telefone'], ['office_email', 'E-mail'], ['office_address', 'Endereço', 'wide'],
-      ['opening_balance', 'Saldo inicial do caixa (R$)', 'number', 'Saldo em conta na data abaixo. O saldo atual = saldo inicial + recebimentos − pagamentos a partir desta data.'], ['opening_balance_date', 'Data do saldo inicial', 'date']], ctx);
+    const s = await api.get('/admin/settings');
+    const f = (k, l, { type = 'text', wide, hint, ph = '' } = {}) => html`<div class="field ${wide ? 'wide' : ''}"><label>${l}</label><input name="${k}" type="${type}" value="${s[k] || ''}" placeholder="${ph}" ${type === 'number' ? html`step="any"` : ''}>${hint ? html`<span class="hint">${hint}</span>` : ''}</div>`;
+    const form = el(html`<form class="col" style="gap:16px">
+      <p class="small muted" style="margin:0">Estes dados são cadastrados uma única vez e reaproveitados nas propostas, contratos, PDFs e lembretes de cobrança.</p>
+      <div class="grid g2">
+        <div class="card"><div class="card-head"><h3>Dados do escritório</h3></div><div class="form-grid">
+          ${f('office_name', 'Nome do escritório', { wide: true })}${f('office_tagline', 'Assinatura', { wide: true })}
+          ${f('office_doc', 'CNPJ')}${f('office_email', 'E-mail')}${f('office_phone', 'Telefones', { wide: true })}${f('office_address', 'Endereço', { wide: true })}
+          ${f('office_city', 'Cidade para documentos', { ph: 'Campo Grande – MS', hint: 'Usada em “local e data” dos contratos.' })}
+          <div class="field"><label>Fuso horário do escritório</label><select name="office_timezone">${s._timezones.map((z) => html`<option ${z === (s.office_timezone || 'America/Campo_Grande') ? 'selected' : ''}>${z}</option>`)}</select><span class="hint">Define “hoje” para vencimentos, lembretes e datas dos PDFs.</span></div>
+        </div></div>
+        <div class="col" style="gap:16px">
+          <div class="card"><div class="card-head"><h3>Logo</h3></div>
+            <div class="logo-prev"><img src="/logo?v=${Date.now()}" alt="Logo atual"></div>
+            <div class="row wrap gap-8 mt-16"><label class="btn sm">${icon('upload', 'sm')} Enviar nova logo<input type="file" accept="image/png,image/jpeg" class="hidden" data-logo></label>${s.office_logo ? html`<button type="button" class="btn sm ghost" data-logo-reset>Voltar para a logo original</button>` : ''}</div>
+            <p class="small muted mt-8" style="margin-bottom:0">PNG com fundo transparente (ou JPG). A mesma logo aparece no menu, na tela de acesso e no canto superior direito dos PDFs, mantendo as proporções.</p></div>
+          <div class="card"><div class="card-head"><h3>Pix para pagamentos</h3></div><div class="form-grid">
+            ${f('office_pix_key', 'Chave Pix', { wide: true, hint: 'Usada nas propostas, contratos e lembretes. Não é preenchida automaticamente.' })}
+            <div class="field"><label>Tipo da chave</label><select name="office_pix_type">${['', 'CPF', 'CNPJ', 'E-mail', 'Telefone', 'Chave aleatória'].map((t) => html`<option value="${t}" ${t === (s.office_pix_type || '') ? 'selected' : ''}>${t || '—'}</option>`)}</select></div>
+            ${f('office_pix_bank', 'Banco (opcional)')}${f('office_pix_name', 'Nome do favorecido', { wide: true })}</div></div>
+        </div>
+        <div class="card"><div class="card-head"><h3>Contratado (para os contratos)</h3></div><div class="form-grid">
+          ${f('contractor_name', 'Nome do contratado', { wide: true, ph: 'Nome completo ou razão social' })}${f('contractor_doc', 'CPF / CNPJ')}${f('contractor_registry', 'Registro profissional', { ph: 'Arquiteto – CAU BR …' })}
+          ${f('contractor_address', 'Endereço completo', { wide: true })}</div></div>
+        <div class="card"><div class="card-head"><h3>Propostas e caixa</h3></div><div class="form-grid">
+          ${f('proposal_validity_days', 'Validade padrão da proposta (dias)', { type: 'number' })}<div></div>
+          ${f('opening_balance', 'Saldo inicial do caixa (R$)', { type: 'number', hint: 'Saldo em conta na data ao lado. O saldo atual = saldo inicial + recebimentos − pagamentos a partir desta data.' })}${f('opening_balance_date', 'Data do saldo inicial', { type: 'date' })}</div></div>
+      </div>
+      <div class="form-actions"><button class="btn primary">Salvar dados do escritório</button></div></form>`);
+    form.onsubmit = async (e) => { e.preventDefault(); const data = Object.fromEntries(new FormData(form)); delete data.file; try { await api.put('/admin/settings', data); toast('Dados do escritório salvos.'); } catch (err) { fail(err); } };
+    form.querySelector('[data-logo]').onchange = async (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      const fd = new FormData(); fd.append('file', file);
+      try { await api('/office/logo', { method: 'POST', body: fd }); toast('Logo atualizada.'); document.querySelectorAll('.brand-logo, .auth-logo').forEach((i) => { i.src = '/logo?v=' + Date.now(); }); body.innerHTML = ''; T.escritorio(body, ctx); } catch (err) { fail(err); }
+    };
+    const lr = form.querySelector('[data-logo-reset]'); if (lr) lr.onclick = async () => { await api.del('/office/logo'); toast('Logo original restaurada.'); document.querySelectorAll('.brand-logo').forEach((i) => { i.src = '/logo?v=' + Date.now(); }); body.innerHTML = ''; T.escritorio(body, ctx); };
+    body.appendChild(form);
+  },
+  async modelos(body) {
+    const { rows, fields, blocks } = await api.get('/doc-templates');
+    const group = (kind, title, hint) => html`<div class="card"><div class="card-head"><h3>${title}</h3></div><p class="small muted" style="margin-top:0">${hint}</p><div class="list tpl-list">${rows.filter((t) => t.kind === kind).map((t) => html`<div class="list-item" data-t="${t.id}"><div class="grow" style="min-width:0"><div class="li-title">${t.service_label}</div><div class="li-sub">versão ${t.version}${t.updated_at ? ' · ' + datetime(t.updated_at) : ''}${t.source ? ' · ' + t.source : ''}</div></div>${t.status === 'pendente' ? html`<span class="badge danger plain">texto pendente</span>` : html`<span class="badge success plain">configurado</span>`}${icon('chevron', 'sm')}</div>`)}</div></div>`;
+    const box = el(html`<div><div class="grid g2">${group('proposta', 'Propostas de honorários', 'Texto inicial de cada nova proposta. Cada proposta guarda a sua cópia, que pode ser editada antes do PDF.')}${group('contrato', 'Contratos', 'Texto inicial de cada contrato. Alterar um modelo não modifica contratos existentes nem emissões já feitas.')}</div>
+      <p class="small muted mt-16">Modelos marcados como <b>texto pendente</b> contêm trechos <code>[PENDENTE: …]</code> que precisam dos seus modelos oficiais. Enquanto houver pendências, o contrato não é emitido — nenhuma cláusula foi inventada.</p></div>`);
+    box.onclick = (e) => { const it = e.target.closest('[data-t]'); if (it) templateEditor(+it.dataset.t, fields, blocks, () => { body.innerHTML = ''; T.modelos(body); }); };
+    body.appendChild(box);
+  },
+  async cobranca(body) {
+    const s = await api.get('/admin/settings');
+    const form = el(html`<form class="col" style="gap:16px">
+      <p class="small muted" style="margin:0">No dia do vencimento de cada parcela em aberto, o sistema prepara a mensagem em Financeiro › Lembretes de cobrança. Nada é enviado automaticamente: você revisa, abre o WhatsApp e marca como enviado.</p>
+      <div class="card flat small">Use os marcadores: <code>[nome do cliente]</code> <code>[data]</code> <code>[número/total]</code> <code>[projeto/serviço]</code> <code>[valor]</code> <code>[chave Pix]</code> <code>[nome do favorecido]</code>. Linhas com marcador sem dado cadastrado (ex.: favorecido) são omitidas.</div>
+      ${!s.office_pix_key ? html`<div class="card flat small warning-text">${icon('alert', 'sm')} A chave Pix ainda não foi cadastrada em Configurações › Escritório.</div>` : ''}
+      <div class="grid g2">
+        <div class="card"><div class="card-head"><h3>Mensagem no dia do vencimento</h3><button type="button" class="btn xs" data-def="whatsapp_template">Restaurar texto inicial</button></div><div class="field"><textarea name="whatsapp_template" rows="16">${s.whatsapp_template || s._wa_defaults.today}</textarea></div></div>
+        <div class="card"><div class="card-head"><h3>Mensagem para parcela vencida</h3><button type="button" class="btn xs" data-def="whatsapp_template_overdue">Restaurar texto inicial</button></div><div class="field"><textarea name="whatsapp_template_overdue" rows="16">${s.whatsapp_template_overdue || s._wa_defaults.overdue}</textarea></div><span class="hint">Usada quando o lembrete fica para depois do vencimento: informa a data em que venceu, sem dizer “vence hoje”.</span></div>
+      </div><div class="form-actions"><button class="btn primary">Salvar mensagens</button></div></form>`);
+    form.onclick = (e) => { const b = e.target.closest('[data-def]'); if (b) form.querySelector(`[name="${b.dataset.def}"]`).value = b.dataset.def === 'whatsapp_template' ? s._wa_defaults.today : s._wa_defaults.overdue; };
+    form.onsubmit = async (e) => { e.preventDefault(); const d = Object.fromEntries(new FormData(form)); if (d.whatsapp_template === s._wa_defaults.today) d.whatsapp_template = ''; if (d.whatsapp_template_overdue === s._wa_defaults.overdue) d.whatsapp_template_overdue = ''; try { await api.put('/admin/settings', d); toast('Mensagens salvas.'); } catch (err) { fail(err); } };
+    body.appendChild(form);
   },
   async usuarios(body, ctx) {
     const users = await api.get('/admin/users');
@@ -129,4 +186,24 @@ async function userModal(u, ctx) {
       toast('Usuário salvo.'); S.meta = await api.get('/meta'); ctx.rerender();
     } }] });
   m.el.style.width = 'min(640px, calc(100vw - 32px))';
+}
+
+async function templateEditor(id, fields, blocks, onDone) {
+  const t = await api.get(`/doc-templates/${id}`);
+  const { bodyEditor } = await import('./docs-common.js');
+  const { drawer } = await import('../lib.js');
+  const box = el(html`<div><div class="row wrap gap-8 mb-16">${t.status === 'pendente' ? html`<span class="badge danger plain">texto pendente</span>` : html`<span class="badge success plain">configurado</span>`}<span class="badge plain">versão ${t.version}</span>${t.source ? html`<span class="small muted">${t.source}</span>` : ''}</div>
+    ${!isAdmin() ? html`<div class="card flat small mb-16">Somente administradores podem alterar os modelos.</div>` : ''}<div data-ed></div>
+    <div class="eyebrow mt-24 mb-8">Histórico de versões</div><div class="list">${t.versions.map((v) => html`<div class="list-item"><div class="grow"><div class="li-title">Versão ${v.version}</div><div class="li-sub">${datetime(v.created_at)}${v.created_by_name ? ' · ' + v.created_by_name : ''}</div></div><button class="btn xs" data-v="${v.version}">Ver texto</button></div>`)}</div></div>`);
+  const ed = bodyEditor({ value: t.body, fields, blocks, rows: 30 });
+  box.querySelector('[data-ed]').appendChild(ed);
+  const d = drawer({ title: t.name, sub: 'Modelo de documento', body: box, wide: true });
+  box.onclick = async (e) => { const b = e.target.closest('[data-v]'); if (!b) return; const v = await api.get(`/doc-templates/${id}/versions/${b.dataset.v}`); modal({ title: `Versão ${v.version}`, body: html`<pre class="notes" style="max-height:60vh;overflow:auto;font-size:12px">${v.body}</pre>`, actions: [{ label: 'Usar este texto no editor', fn: () => ed.body.set(v.body) }, { label: 'Fechar', primary: true }] }).el.style.width = 'min(760px, calc(100vw - 32px))'; };
+  if (isAdmin()) {
+    d.foot.classList.remove('hidden');
+    d.foot.innerHTML = toHTML(html`<button class="btn" data-restore>Restaurar texto original</button><span class="grow"></span><button class="btn" data-close2>Fechar</button><button class="btn primary" data-save>Salvar nova versão</button>`);
+    d.foot.querySelector('[data-close2]').onclick = d.close;
+    d.foot.querySelector('[data-save]').onclick = async () => { try { const r = await api.put(`/doc-templates/${id}`, { body: ed.body.get() }); toast(`Modelo salvo — versão ${r.version}. Documentos já criados não mudam.`); d.close(); onDone(); } catch (err) { fail(err); } };
+    d.foot.querySelector('[data-restore]').onclick = async () => { if (await confirmDialog('Restaurar o texto original deste modelo? Será criada uma nova versão.', { title: 'Restaurar', ok: 'Restaurar' })) { await api.post(`/doc-templates/${id}/restore-default`); toast('Texto original restaurado.'); d.close(); onDone(); } };
+  }
 }

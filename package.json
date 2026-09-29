@@ -8,7 +8,7 @@
     "dev": "node --watch --disable-warning=ExperimentalWarning server/index.js",
     "demo": "node --disable-warning=ExperimentalWarning scripts/demo-data.js",
     "backup": "node --disable-warning=ExperimentalWarning scripts/backup.js",
-    "test": "node --disable-warning=ExperimentalWarning scripts/test-api.js",
+    "test": "node --disable-warning=ExperimentalWarning scripts/test-api.js && node --disable-warning=ExperimentalWarning scripts/test-docs.js",
     "start:demo": "node --disable-warning=ExperimentalWarning server/index.js --demo"
   },
   "license": "UNLICENSED",
@@ -17,7 +17,8 @@
     "cookie-parser": "^1.4.7",
     "express": "^5.2.1",
     "multer": "^2.4.0",
-    "nodemailer": "^10.0.10"
+    "nodemailer": "^10.0.10",
+    "pdfmake": "^0.2.20"
   },
   "engines": {
     "node": ">=22.13"

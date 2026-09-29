@@ -8,5 +8,6 @@ module.exports = function client(base) {
     if (!r.ok) { const e = new Error(`${method} ${path} → ${r.status} ${data && data.error}`); e.status = r.status; e.data = data; throw e; }
     return data;
   }
-  return { get: (p) => call('GET', p), post: (p, b) => call('POST', p, b || {}), put: (p, b) => call('PUT', p, b || {}), del: (p) => call('DELETE', p), raw: call, reset: () => { cookie = ''; } };
+  return { get: (p) => call('GET', p), post: (p, b) => call('POST', p, b || {}), put: (p, b) => call('PUT', p, b || {}), del: (p) => call('DELETE', p), raw: call, reset: () => { cookie = ''; },
+    file: (path) => fetch(base + '/api' + path, { headers: { 'X-Requested-With': 'cnij', cookie } }) };
 };

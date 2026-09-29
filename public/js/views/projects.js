@@ -57,7 +57,7 @@ async function detail(ctx, id) {
   const cur = d.phases.find((ph) => !['concluido', 'aprovado'].includes(ph.status));
   const openTasks = d.tasks.filter((t) => t.status !== 'concluida');
   const tabs = [
-    ['geral', 'Visão geral'], ['etapas', 'Etapas', d.phases.length], ['tarefas', 'Tarefas', openTasks.length], ['obra', 'Obra', d.works.length],
+    ['geral', 'Visão geral'], ['etapas', 'Etapas', d.phases.length], ['tarefas', 'Tarefas', openTasks.length], ['obra', 'Obra', d.works.length], ['infoobra', 'Informações da obra'],
     can('obras') || d.quotes.length ? ['orcamentos', 'Orçamentos', d.quotes.length] : null, fin ? ['financeiro', 'Financeiro'] : null,
     ['documentos', 'Documentos e imagens', d.documents.length + d.images.length], ['agenda', 'Agenda', d.events.length], ['horas', 'Horas'], ['historico', 'Histórico'],
   ].filter(Boolean);
@@ -191,6 +191,51 @@ const TABS = {
   },
 
   orcamentos(body, d, { reload }) { body.appendChild(quotesPanel(d.quotes, { projectId: d.project.id, onChange: reload })); },
+
+  async infoobra(body, d, { reload }) {
+    const { rowsEditor, dirtyTracker, openPdf, readForm } = await import('../lib.js');
+    const r = await api.get(`/projects/${d.project.id}/site-info`);
+    const i = r.info; const L = S.meta.lists;
+    const opts = (k) => L[k].map((o) => ({ value: o.value, label: o.label }));
+    const box = el(html`<div class="col" style="gap:16px">
+      <div class="row between wrap gap-8"><div class="small muted">Ficha interna de acompanhamento da obra${i.updated_at ? html` · atualizada em ${datetime(i.updated_at)}${i.updated_by_name ? ' por ' + i.updated_by_name : ''}` : ' · ainda não preenchida'}. Não é publicada na Área do Cliente.</div>
+        <div class="row gap-8"><span class="dirty-flag">alterações não salvas</span><button class="btn" data-save>${icon('check')} Salvar</button><button class="btn primary" data-pdf>${icon('print')} Gerar relatório da obra em PDF</button></div></div>
+      <div class="card"><div class="card-head"><h3>Dados gerais</h3></div><form class="form-grid" data-f>
+        <div class="field"><label>Cliente</label><input value="${r.client ? r.client.name : ''}" disabled></div><div class="field"><label>Projeto</label><input value="${r.project.name}" disabled></div>
+        <div class="field wide"><label>Endereço da obra</label><input name="address" value="${i.address || ''}"></div>
+        <div class="field"><label>Responsável pelo acompanhamento <span class="req">*</span></label><select name="responsible_id"><option value="">— outro (digite ao lado) —</option>${S.meta.users.map((u) => html`<option value="${u.id}" ${u.id === i.responsible_id ? 'selected' : ''}>${u.name}</option>`)}</select></div>
+        <div class="field"><label>Responsável (se não for da equipe)</label><input name="responsible_name" value="${i.responsible_name || ''}" placeholder="Ex.: engenheiro da construtora"></div>
+        <div class="field"><label>Data de atualização</label><input type="date" name="updated_on" value="${i.updated_on || today()}"></div>
+        <div class="field"><label>Situação atual da obra <span class="req">*</span></label><select name="situation"><option value="">—</option>${L.SITE_SITUATION.map((o) => html`<option value="${o.value}" ${o.value === i.situation ? 'selected' : ''}>${o.label}</option>`)}</select></div>
+        <div class="field wide"><label>Resumo do andamento</label><textarea name="summary" rows="4">${i.summary || ''}</textarea></div></form></div>
+      <div class="card"><div class="card-head"><h3>Projetos executivos</h3><div class="row gap-8"><select class="input" data-exs style="height:32px;width:auto;font-size:12.5px"><option value="">Situação geral: automática</option>${L.EXECUTIVES_STATUS.map((o) => html`<option value="${o.value}" ${o.value === i.executives_status ? 'selected' : ''}>${o.label}</option>`)}</select>${!i.executives.length ? html`<button class="btn xs" data-suggest>Sugerir lista padrão</button>` : ''}</div></div>
+        <p class="small muted" style="margin-top:0">Com a lista preenchida, a situação geral é calculada: não entregues, parcialmente entregues ou entregues.${i.executives_status ? html` Atual: <b>${label('EXECUTIVES_STATUS', i.executives_status)}</b>.` : ''}</p><div data-ex></div></div>
+      <div class="grid g2"><div class="card"><div class="card-head"><h3>Pendências de projeto</h3></div><div data-pp></div></div><div class="card"><div class="card-head"><h3>Pendências de execução</h3></div><div data-pe></div></div></div>
+      <div class="card"><div class="card-head"><h3>Aprovações necessárias do cliente</h3></div><div data-ap></div></div>
+      <div class="card"><div class="card-head"><h3>Próximas etapas e planejamento</h3></div><p class="small muted" style="margin-top:0">Informe as próximas etapas e serviços previstos com as previsões definidas pelo escritório. O sistema não cria previsões automaticamente.</p><div data-ns></div></div>
+      <div class="card"><div class="card-head"><h3>Observações gerais</h3></div><div class="field"><textarea name="notes" rows="3" data-notes>${i.notes || ''}</textarea></div></div></div>`);
+    body.appendChild(box);
+    const tracker = dirtyTracker(box);
+    const mk = (sel, rows, columns, add) => { const ed = rowsEditor({ columns, rows, addLabel: add, onChange: () => tracker.mark() }); box.querySelector(sel).appendChild(ed); return ed; };
+    const pendCols = [{ key: 'descricao', label: 'Pendência', w: '2fr', type: 'textarea' }, { key: 'responsavel', label: 'Responsável', w: '1fr' }, { key: 'prazo', label: 'Prazo', type: 'date', w: '1fr' }, { key: 'situacao', label: 'Situação', type: 'select', options: opts('PENDING_STATUS'), w: '1fr', default: 'aberta' }];
+    const ex = mk('[data-ex]', i.executives, [{ key: 'nome', label: 'Projeto executivo', w: '2fr' }, { key: 'situacao', label: 'Situação', type: 'select', options: opts('EXECUTIVE_ITEM_STATUS'), w: '1.1fr', default: 'nao_entregue' }, { key: 'revisao', label: 'Revisão', w: '.7fr', placeholder: 'R00' }, { key: 'entrega', label: 'Data de entrega', type: 'date', w: '1fr' }], 'Adicionar executivo');
+    const pp = mk('[data-pp]', i.pending_project, pendCols, 'Adicionar pendência');
+    const pe = mk('[data-pe]', i.pending_execution, pendCols, 'Adicionar pendência');
+    const ap = mk('[data-ap]', i.approvals, [{ key: 'descricao', label: 'Item para aprovação', w: '2fr', type: 'textarea' }, { key: 'responsavel', label: 'Responsável', w: '1fr' }, { key: 'prazo', label: 'Prazo', type: 'date', w: '1fr' }, { key: 'situacao', label: 'Situação', type: 'select', options: opts('APPROVAL_STATUS'), w: '1fr', default: 'pendente' }], 'Adicionar aprovação');
+    const ns = mk('[data-ns]', i.next_steps, [{ key: 'descricao', label: 'Etapa / serviço previsto', w: '2fr', type: 'textarea' }, { key: 'inicio', label: 'Previsão de início', type: 'date', w: '1fr' }, { key: 'conclusao', label: 'Previsão de conclusão', type: 'date', w: '1fr' }, { key: 'responsavel', label: 'Responsável', w: '1fr' }], 'Adicionar etapa');
+    const sg = box.querySelector('[data-suggest]');
+    if (sg) sg.onclick = () => { ex.rows.set(['Planta layout', 'Planta técnica', 'Planta luminotécnica', 'Planta elétrica', 'Planta hidráulica', 'Planta de forro e gesso', 'Planta de pintura', 'Revestimentos e paginação', 'Marcenaria', 'Marmoraria', 'Serralheria', 'Esquadrias'].map((n) => ({ nome: n, situacao: 'nao_entregue', revisao: '', entrega: '' }))); tracker.mark(); toast('Lista sugerida adicionada — remova o que não se aplica.'); };
+    const save = async (quiet) => {
+      const f = readForm(box.querySelector('[data-f]'));
+      const exs = box.querySelector('[data-exs]').value;
+      const data = { ...f, notes: box.querySelector('[data-notes]').value, executives: ex.rows.get(), pending_project: pp.rows.get(), pending_execution: pe.rows.get(), approvals: ap.rows.get(), next_steps: ns.rows.get(), executives_status: exs, executives_status_manual: exs ? 1 : 0 };
+      if (!data.responsible_id && !String(data.responsible_name || '').trim()) { toast('Informe o responsável pelo acompanhamento.', { error: true }); return false; }
+      if (!data.situation) { toast('Informe a situação atual da obra.', { error: true }); return false; }
+      try { await api.put(`/projects/${d.project.id}/site-info`, data); tracker.clean(); if (!quiet) toast('Informações da obra salvas.'); body.innerHTML = ''; TABS.infoobra(body, d, { reload }); return true; } catch (e) { fail(e); return false; }
+    };
+    box.querySelector('[data-save]').onclick = () => save();
+    box.querySelector('[data-pdf]').onclick = () => openPdf(`/pdf/site-info/${d.project.id}`, { dirty: tracker.dirty || i._new, save: () => save(true) });
+  },
 
   financeiro(body, d, { reload }) {
     const pr = d.profitability; const p = d.project;

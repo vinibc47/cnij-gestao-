@@ -62,6 +62,7 @@ router.get('/dashboard', wrap((req, res) => {
         amount: sum("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE status IN ('a_pagar','previsto') AND paid_by='escritorio' AND due_date BETWEEN ? AND ?", t, addDays(t, 7)),
       },
       months: cf.months, horizons: cf.horizons,
+      reminders: val("SELECT COUNT(*) FROM billing_reminders br JOIN incomes i ON i.id = br.income_id WHERE br.status = 'pendente' AND i.status IN ('a_receber','vencido')"),
       expenses_by_category: all("SELECT COALESCE(category,'Sem categoria') label, ROUND(SUM(amount),2) value FROM expenses WHERE status <> 'cancelado' AND paid_by='escritorio' AND due_date BETWEEN ? AND ? GROUP BY 1 ORDER BY 2 DESC", ms, me),
       receivables: all(`SELECT i.id, i.description, i.amount, i.due_date, i.status, c.name client_name FROM incomes i LEFT JOIN clients c ON c.id = i.client_id
                         WHERE i.status IN ('a_receber','vencido','previsto') ORDER BY i.due_date LIMIT 8`),
@@ -92,6 +93,8 @@ router.get('/dashboard', wrap((req, res) => {
   const A = [];
   const push = (severity, type, title, detail, link) => A.push({ severity, type, title, detail, link });
   if (P.canFinance(u)) {
+    const rem = all("SELECT br.due_date, c.name cname, i.amount FROM billing_reminders br JOIN incomes i ON i.id = br.income_id LEFT JOIN clients c ON c.id = i.client_id WHERE br.status = 'pendente' AND i.status IN ('a_receber','vencido') ORDER BY br.due_date DESC");
+    if (rem.length) push(rem.some((r) => r.due_date === t) ? 'warning' : 'danger', 'Lembretes de cobrança (WhatsApp)', `${rem.length} mensagem(ns) pronta(s) para enviar`, rem.slice(0, 3).map((r) => `${r.cname || 'Cliente'} ${brl(r.amount)}`).join(' · '), '#/financeiro/lembretes');
     all("SELECT e.*, s.company sname FROM expenses e LEFT JOIN suppliers s ON s.id = e.supplier_id WHERE e.status IN ('a_pagar','previsto') AND e.paid_by='escritorio' AND e.due_date = ?", t)
       .forEach((x) => push('warning', 'Pagamento vence hoje', x.description, `${brl(x.amount)}${x.sname ? ' · ' + x.sname : ''}`, `#/financeiro/saidas?id=${x.id}`));
     all("SELECT i.*, c.name cname FROM incomes i LEFT JOIN clients c ON c.id = i.client_id WHERE i.status = 'a_receber' AND i.due_date = ?", t)

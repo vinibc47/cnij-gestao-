@@ -16,7 +16,10 @@ if (fs.existsSync(envFile)) {
 if (process.argv.includes('--demo') && !process.env.DB_FILE) process.env.DB_FILE = path.join(__dirname, '..', 'data', 'demo.sqlite');
 const express = require('express');
 const cookieParser = require('cookie-parser');
-const { get, val, insert } = require('./db');
+const { get, val, insert, getSetting } = require('./db');
+// fuso horário configurado para o escritório (Configurações › Escritório)
+{ const tz = getSetting('office_timezone', ''); if (tz && !process.env.TZ_LOCK) process.env.TZ = tz; }
+require('./services/docs').seedTemplates();
 const { HttpError, wrap, audit } = require('./util');
 const auth = require('./auth');
 const crud = require('./crud');
@@ -58,11 +61,15 @@ app.post('/api/setup', wrap((req, res) => {
   res.json({ ok: true });
 }));
 
+// Logo do escritório (cadastrada em Configurações › Escritório; usada no menu, no login e nos PDFs)
+app.get('/logo', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(require('./pdf').logoPath()); });
+
 app.use('/api/auth', auth.router);
 app.use('/api/portal', require('./routes/portal'));
 app.use('/api', auth.requireStaff);
 app.use('/api', require('./routes/core'));
 app.use('/api', require('./routes/ops').router);
+app.use('/api', require('./routes/docs').router);
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/r', crud.router);
@@ -70,7 +77,11 @@ app.use('/api', (req, res, next) => next(new HttpError(404, 'Rota não encontrad
 
 // Frontend
 const PUBLIC = path.join(__dirname, '..', 'public');
-app.use(express.static(PUBLIC, { index: 'index.html', maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0 }));
+// HTML/CSS/JS sempre revalidados (atualizações aparecem na hora); imagens e fontes ficam em cache
+app.use(express.static(PUBLIC, { index: 'index.html', setHeaders(res, file) {
+  if (/\.(html|css|js|webmanifest)$/i.test(file)) res.setHeader('Cache-Control', 'no-cache');
+  else res.setHeader('Cache-Control', 'public, max-age=86400');
+} }));
 app.get(/^\/(?!api).*/, (req, res) => res.sendFile(path.join(PUBLIC, 'index.html')));
 
 // Tratamento de erros

@@ -12,7 +12,7 @@ const brl = (n) => 'R$ ' + Number(n || 0).toLocaleString('pt-BR', { minimumFract
 const br = (d) => d ? d.slice(0, 10).split('-').reverse().join('/') : '';
 
 let collecting = null; // chaves geradas na rodada atual (para limpar alertas que deixaram de valer)
-const AUTO_KINDS = ['tarefa_atrasada', 'tarefa_vencendo', 'cliente_inadimplente', 'recebimento_proximo', 'pagamento_vencendo', 'proposta_expirando', 'entrega_proxima', 'reuniao_proxima', 'contrato_pendente', 'documento_vencendo', 'projeto_concluido'];
+const AUTO_KINDS = ['tarefa_atrasada', 'tarefa_vencendo', 'cliente_inadimplente', 'recebimento_proximo', 'pagamento_vencendo', 'proposta_expirando', 'entrega_proxima', 'reuniao_proxima', 'contrato_pendente', 'documento_vencendo', 'projeto_concluido', 'lembrete_cobranca'];
 function notify(userId, { kind, severity = 'info', title, body, link, key }) {
   if (!userId) return;
   if (collecting && key) collecting.add(`${userId}|${key}`);
@@ -59,6 +59,13 @@ function buildInner() {
       title: late ? `Pagamento em atraso: ${x.description}` : `Pagamento ${x.due_date === t ? 'vence hoje' : 'vence em ' + br(x.due_date)}: ${x.description}`,
       body: `${brl(x.amount)}${x.sname ? ' · ' + x.sname : ''}`, link: `#/financeiro/saidas?id=${x.id}`, key: `exp_${late ? 'late' : 'due'}_${x.id}_${x.due_date}` }));
   }
+  // lembretes de cobrança prontos para envio pelo WhatsApp
+  for (const x of all(`SELECT br.income_id, br.due_date, i.amount, i.description, c.name cname FROM billing_reminders br JOIN incomes i ON i.id = br.income_id
+      LEFT JOIN clients c ON c.id = i.client_id WHERE br.status = 'pendente' AND i.status IN ('a_receber','vencido')`)) {
+    fin.forEach((u) => notify(u, { kind: 'lembrete_cobranca', severity: x.due_date < t ? 'danger' : 'warning',
+      title: `Lembrete de cobrança para enviar — ${x.cname || x.description}`, body: `${brl(x.amount)} · ${x.due_date < t ? 'venceu em' : 'vence hoje'} ${br(x.due_date)}`,
+      link: '#/financeiro/lembretes', key: `remind_${x.income_id}_${x.due_date}` }));
+  }
   for (const x of all("SELECT pr.*, c.name cname FROM proposals pr LEFT JOIN clients c ON c.id = pr.client_id WHERE pr.status IN ('enviada','visualizada','negociacao') AND pr.valid_until BETWEEN ? AND ?", t, addDays(t, days('alert_days_proposals', 5)))) {
     mgr.forEach((u) => notify(u, { kind: 'proposta_expirando', severity: 'warning', title: `Proposta expira em ${br(x.valid_until)} — ${x.cname}`,
       body: `${x.number} · ${x.title} · ${brl(x.amount)}`, link: `#/propostas/${x.id}`, key: `prop_exp_${x.id}_${x.valid_until}` }));
@@ -97,6 +104,19 @@ function buildInner() {
   run("DELETE FROM notifications WHERE read_at IS NOT NULL AND created_at < datetime('now','-90 days')");
 }
 
+// Cria (uma única vez por parcela) os lembretes de cobrança no dia do vencimento.
+// Somente parcelas em aberto (a receber / vencidas); pagas, canceladas ou previstas não geram lembrete.
+function syncReminders() {
+  const t = today();
+  for (const i of all("SELECT id, due_date FROM incomes WHERE status IN ('a_receber','vencido') AND paid_at IS NULL AND due_date <= ?", t)) {
+    const r = get('SELECT id, due_date, status FROM billing_reminders WHERE income_id = ?', i.id);
+    if (!r) run("INSERT OR IGNORE INTO billing_reminders(income_id, due_date, status, created_at) VALUES (?,?, 'pendente', ?)", i.id, i.due_date, nowIso());
+    else if (r.due_date !== i.due_date) run("UPDATE billing_reminders SET due_date = ?, status = 'pendente', custom_message = NULL, edited_at = NULL, sent_at = NULL, sent_by = NULL WHERE id = ?", i.due_date, r.id);
+  }
+  // lembretes ainda não enviados deixam de existir se a parcela foi paga, cancelada ou teve o vencimento adiado
+  run(`DELETE FROM billing_reminders WHERE status = 'pendente' AND income_id IN (SELECT id FROM incomes WHERE status NOT IN ('a_receber','vencido') OR paid_at IS NOT NULL OR due_date > ?)`, t);
+}
+
 let lastRun = 0;
 function runAutomations(force = false) {
   if (!force && Date.now() - lastRun < 60 * 1000) return;
@@ -104,6 +124,7 @@ function runAutomations(force = false) {
   try {
     finance.refreshStatuses();
     finance.generateRecurring();
+    syncReminders();
     run("UPDATE proposals SET status = 'expirada', decided_at = ? WHERE status IN ('enviada','visualizada') AND valid_until < ?", today(), today());
     buildNotifications();
   } catch (e) { console.error('Automação falhou:', e); }
@@ -130,4 +151,4 @@ function start() {
   setInterval(() => { runAutomations(true); dailyBackup(); }, 10 * 60 * 1000).unref();
 }
 
-module.exports = { start, runAutomations, notify, backupNow, BACKUP_DIR, managerUsers, financeUsers };
+module.exports = { start, runAutomations, syncReminders, notify, backupNow, BACKUP_DIR, managerUsers, financeUsers };

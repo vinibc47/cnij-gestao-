@@ -485,3 +485,96 @@ CREATE INDEX IF NOT EXISTS ix_notif_user ON notifications(user_id, read_at);
 CREATE INDEX IF NOT EXISTS ix_audit_entity ON audit_log(entity, entity_id);
 CREATE INDEX IF NOT EXISTS ix_quotes_project ON quotes(project_id);
 CREATE INDEX IF NOT EXISTS ix_time_project ON time_entries(project_id);
+
+-- =====================================================================
+-- Documentos, cobranças e acompanhamento (v2)
+-- =====================================================================
+
+-- Lembretes de cobrança via WhatsApp (um por parcela; nunca enviados automaticamente)
+CREATE TABLE IF NOT EXISTS billing_reminders (
+  id INTEGER PRIMARY KEY,
+  income_id INTEGER NOT NULL UNIQUE REFERENCES incomes(id) ON DELETE CASCADE,
+  due_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente','enviado')),
+  custom_message TEXT,
+  edited_at TEXT,
+  sent_at TEXT,
+  sent_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Modelos de texto (propostas e contratos) por tipo de serviço, com versão
+CREATE TABLE IF NOT EXISTS doc_templates (
+  id INTEGER PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('proposta','contrato')),
+  service_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 1,
+  source TEXT,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (kind, service_type)
+);
+CREATE TABLE IF NOT EXISTS doc_template_versions (
+  id INTEGER PRIMARY KEY,
+  template_id INTEGER NOT NULL REFERENCES doc_templates(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (template_id, version)
+);
+
+-- Emissões de contrato: cópia imutável do texto e dos dados usados em cada versão
+CREATE TABLE IF NOT EXISTS contract_issues (
+  id INTEGER PRIMARY KEY,
+  contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  template_id INTEGER REFERENCES doc_templates(id) ON DELETE SET NULL,
+  template_version INTEGER,
+  snapshot TEXT NOT NULL,
+  notes TEXT,
+  issued_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  issued_at TEXT NOT NULL,
+  UNIQUE (contract_id, version)
+);
+
+-- Informações gerais da obra (uma ficha por projeto)
+CREATE TABLE IF NOT EXISTS project_site_info (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+  address TEXT,
+  responsible_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  responsible_name TEXT,
+  updated_on TEXT,
+  situation TEXT,
+  summary TEXT,
+  executives_status TEXT,
+  executives TEXT,
+  pending_project TEXT,
+  pending_execution TEXT,
+  approvals TEXT,
+  next_steps TEXT,
+  notes TEXT,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Orçamento de execução da obra (itens com quantidade e valor unitário)
+CREATE TABLE IF NOT EXISTS work_budget_items (
+  id INTEGER PRIMARY KEY,
+  work_id INTEGER NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL DEFAULT 0,
+  group_name TEXT,
+  item TEXT NOT NULL,
+  description TEXT,
+  qty REAL NOT NULL DEFAULT 1,
+  unit TEXT,
+  unit_price REAL NOT NULL DEFAULT 0,
+  notes TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_budget_work ON work_budget_items(work_id, position);
+CREATE INDEX IF NOT EXISTS ix_issues_contract ON contract_issues(contract_id);

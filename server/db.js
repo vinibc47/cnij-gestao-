@@ -41,6 +41,29 @@ function update(table, id, data) {
 function getSetting(key, def = null) { const r = get('SELECT value FROM settings WHERE key = ?', key); return r ? r.value : def; }
 function setSetting(key, value) { run('INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, value == null ? null : String(value)); }
 
+// ---------- Migrações: novas colunas em bancos já existentes (nunca apagam dados) ----------
+const MIGRATIONS = {
+  proposals: {
+    kind: "TEXT NOT NULL DEFAULT 'simples'", service_type: 'TEXT', work_type: 'TEXT', issue_date: 'TEXT', contact_name: 'TEXT',
+    summary: 'TEXT', scope: 'TEXT', excluded: 'TEXT', deliverables: 'TEXT', stages: 'TEXT', deadline_text: 'TEXT',
+    down_payment: 'REAL', payment_plan: 'TEXT', payment_method: 'TEXT', pix_key: 'TEXT', pix_name: 'TEXT', conditions: 'TEXT',
+    extra: 'TEXT', body: 'TEXT', template_id: 'INTEGER', template_version: 'INTEGER', approved_by: 'TEXT', approved_at: 'TEXT',
+    approval_notes: 'TEXT', approved_user_id: 'INTEGER',
+  },
+  contracts: { service_type: 'TEXT', template_id: 'INTEGER', template_version: 'INTEGER', body: 'TEXT', data: 'TEXT', payment_plan: 'TEXT' },
+  works: { budget_notes: 'TEXT' },
+  work_phases: { responsible: 'TEXT', pending: 'TEXT', next_action: 'TEXT' },
+};
+function migrate() {
+  for (const [table, cols] of Object.entries(MIGRATIONS)) {
+    const have = new Set(all(`PRAGMA table_info(${table})`).map((c) => c.name));
+    for (const [col, def] of Object.entries(cols)) if (!have.has(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+  }
+  // status de proposta simplificados: Rascunho, Enviada, Aprovada, Recusada, Expirada
+  run("UPDATE proposals SET status = 'enviada' WHERE status IN ('visualizada','negociacao')");
+}
+migrate();
+
 // ---------- Dados iniciais (somente configuração, nunca dados fictícios) ----------
 function seedDefaults() {
   tx(() => {
@@ -59,8 +82,18 @@ function seedDefaults() {
       alert_days_payments: '5', alert_days_tasks: '2', alert_days_deliveries: '7', alert_days_documents: '30',
       alert_days_proposals: '5', recurring_months_ahead: '3', backup_keep: '30',
       office_doc: '', office_address: '', office_phone: '', office_email: '',
+      office_city: 'Campo Grande – MS', office_timezone: 'America/Campo_Grande',
+      office_pix_key: '', office_pix_type: '', office_pix_name: '', office_pix_bank: '', office_logo: '',
+      contractor_name: '', contractor_doc: '', contractor_address: '', contractor_registry: '',
+      proposal_validity_days: '15', whatsapp_template: '', whatsapp_template_overdue: '',
     };
     for (const [k, v] of Object.entries(defaults)) if (getSetting(k) === null) setSetting(k, v);
+    // contatos comerciais que já constam nas propostas do escritório (preenchidos só se estiverem vazios)
+    if (getSetting('seed_contacts_v2') === null) {
+      const fill = { office_address: 'Rua Pernambuco, 3080 – Campo Grande/MS', office_phone: 'Carla: (67) 99963-5802 · Irineu: (67) 98207-7556', office_email: 'contatocarlaeirineu@gmail.com' };
+      for (const [k, v] of Object.entries(fill)) if (!getSetting(k)) setSetting(k, v);
+      setSetting('seed_contacts_v2', '1');
+    }
   });
 }
 seedDefaults();

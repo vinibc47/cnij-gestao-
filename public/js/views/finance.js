@@ -2,7 +2,7 @@ import { S, api, html, el, toHTML, icon, money, date, monthLabel, badge, label, 
 import { barChart, lineChart } from '../charts.js';
 import { listPage, rowActions } from './common.js';
 
-const TABS = [['', 'Visão geral'], ['entradas', 'Entradas'], ['saidas', 'Saídas'], ['recorrentes', 'Despesas recorrentes'], ['fluxo', 'Fluxo de caixa']];
+const TABS = [['', 'Visão geral'], ['entradas', 'Entradas'], ['saidas', 'Saídas'], ['lembretes', 'Lembretes de cobrança'], ['recorrentes', 'Despesas recorrentes'], ['fluxo', 'Fluxo de caixa']];
 
 export default async function (ctx) {
   const sec = ctx.params[0] || '';
@@ -10,6 +10,7 @@ export default async function (ctx) {
   const wrap = el('<div></div>'); ctx.root.appendChild(wrap);
   if (sec === 'entradas' || sec === 'saidas') return entries(ctx, wrap, sec === 'entradas' ? 'incomes' : 'expenses', tabs);
   if (sec === 'recorrentes') return recurring(ctx, wrap, tabs);
+  if (sec === 'lembretes') return reminders(ctx, wrap, tabs);
   return overview(ctx, wrap, tabs, sec === 'fluxo');
 }
 
@@ -209,4 +210,47 @@ async function recurring(ctx, root, tabs) {
   });
   holder.querySelector('.page-head').after(el(toHTML(tabs)));
   root.appendChild(holder);
+}
+
+// ------------------------------ Lembretes de cobrança (WhatsApp) ------------------------------
+async function reminders(ctx, root, tabs) {
+  const { copyText } = await import('../lib.js');
+  const d = await api.get('/reminders');
+  const view = ctx.query.ver === 'enviados' ? 'enviados' : 'abertos';
+  const todayRows = d.open.filter((r) => !r.overdue); const lateRows = d.open.filter((r) => r.overdue);
+  const card = (r) => html`<div class="card rem ${r.status === 'enviado' ? 'sent' : ''}" data-r="${r.id}">
+    <div class="row between top gap-8"><div style="min-width:0"><div class="cell-title">${r.client_name || 'Cliente não informado'}</div><div class="cell-sub">${r.project_name || r.description}</div></div>
+      <div class="serif nw" style="font-size:22px;white-space:nowrap">${money(r.amount)}</div></div>
+    <div>${r.status === 'enviado' ? html`<span class="badge success">Enviado em ${date(r.sent_at)}</span>` : r.overdue ? html`<span class="badge danger">Venceu em ${date(r.due_date)} · há ${r.days_late} dia(s)</span>` : html`<span class="badge warning">Vence hoje</span>`}</div>
+    <div class="small muted">Parcela ${r.installment_total > 1 ? `${r.installment_no}/${r.installment_total}` : 'única'} · vencimento ${date(r.due_date)} · ${r.phone ? `WhatsApp +${r.phone}` : html`<span class="danger-text">cliente sem telefone/WhatsApp cadastrado</span>`}${r.edited ? ' · mensagem editada' : ''}${r.status === 'enviado' && r.sent_by_name ? ` · marcado por ${r.sent_by_name}` : ''}</div>
+    <div class="msg">${r.message}</div>
+    <div class="acts">
+      <button class="btn sm" data-edit>${icon('edit', 'sm')} Editar mensagem</button>
+      <button class="btn sm" data-copy>${icon('copy', 'sm')} Copiar mensagem</button>
+      ${r.phone ? html`<a class="btn sm wa-btn" href="https://wa.me/${r.phone}?text=${encodeURIComponent(r.message)}" target="_blank" rel="noopener" data-wa>${icon('chat', 'sm')} Abrir no WhatsApp</a>` : html`<a class="btn sm" href="#/clientes/${r.client_id}">Cadastrar telefone</a>`}
+      ${r.status === 'enviado' ? html`<button class="btn sm ghost" data-unsent>Desfazer “enviado”</button>` : html`<button class="btn sm primary" data-sent>${icon('check', 'sm')} Marcar como enviado</button>`}
+      <a class="btn sm ghost" href="#/financeiro/entradas?id=${r.income_id}">Ver parcela</a></div></div>`;
+  root.innerHTML = toHTML(html`
+    <div class="page-head"><div><h1>Financeiro</h1><div class="sub">Lembretes de cobrança preparados no dia do vencimento — revise e envie você mesmo pelo WhatsApp</div></div>
+      <div class="row wrap"><a class="btn" href="#/configuracoes/cobranca">${icon('settings')} Texto das mensagens</a></div></div>
+    ${tabs}
+    ${d.pix_missing ? html`<div class="card flat mb-16 row between wrap"><span class="warning-text row gap-8">${icon('alert', 'sm')} A chave Pix do escritório não está cadastrada — as mensagens saem sem os dados de pagamento.</span><a class="btn sm" href="#/configuracoes/escritorio">Cadastrar chave Pix</a></div>` : ''}
+    <div class="chips mb-16"><a class="chip ${view === 'abertos' ? 'on' : ''}" href="#/financeiro/lembretes">A enviar <span class="n">${d.open.length}</span></a><a class="chip ${view === 'enviados' ? 'on' : ''}" href="#/financeiro/lembretes?ver=enviados">Enviados <span class="n">${d.sent.length}</span></a></div>
+    ${view === 'abertos' ? html`
+      <div class="section-title">Vencem hoje (${todayRows.length})</div>${todayRows.length ? html`<div class="rem-grid">${todayRows.map(card)}</div>` : html`<div class="empty sm">Nenhuma parcela em aberto vence hoje.</div>`}
+      <div class="section-title">Vencidas ainda sem lembrete enviado (${lateRows.length})</div>${lateRows.length ? html`<div class="rem-grid">${lateRows.map(card)}</div>` : html`<div class="empty sm">Nenhum lembrete vencido pendente.</div>`}`
+    : d.sent.length ? html`<div class="rem-grid">${d.sent.map(card)}</div>` : html`<div class="empty sm">Nenhum lembrete enviado recentemente.</div>`}
+    <p class="small muted mt-24">Os lembretes são criados automaticamente pelo servidor no dia do vencimento de cada parcela <b>a receber</b> (mesmo que ninguém abra o sistema). Parcelas pagas, canceladas ou apenas previstas não geram lembrete, e cada parcela tem um único lembrete. Abrir o WhatsApp não marca a mensagem como enviada nem a parcela como paga.</p>`);
+  const all_ = [...d.open, ...d.sent];
+  root.addEventListener('click', async (e) => {
+    const c = e.target.closest('[data-r]'); if (!c) return; const r = all_.find((x) => x.id == c.dataset.r);
+    if (e.target.closest('[data-copy]')) { toast((await copyText(r.message)) ? 'Mensagem copiada.' : 'Não foi possível copiar. Selecione o texto e copie manualmente.', { error: false }); }
+    if (e.target.closest('[data-sent]')) { await api.post(`/reminders/${r.id}/sent`); toast('Lembrete marcado como enviado. A parcela continua em aberto até o pagamento ser registrado.'); ctx.rerender(); }
+    if (e.target.closest('[data-unsent]')) { await api.post(`/reminders/${r.id}/unsent`); ctx.rerender(); }
+    if (e.target.closest('[data-edit]')) {
+      const m = modal({ title: 'Editar mensagem', body: html`<p class="small muted" style="margin-top:0">${r.client_name} · ${money(r.amount)} · vencimento ${date(r.due_date)}</p><div class="field"><textarea id="rm-t" rows="14">${r.message}</textarea></div>`,
+        actions: [{ label: 'Restaurar texto padrão', fn: async () => { await api.put(`/reminders/${r.id}`, { reset: true }); toast('Texto padrão restaurado.'); ctx.rerender(); } }, { label: 'Cancelar' }, { label: 'Salvar mensagem', primary: true, fn: async (mm) => { await api.put(`/reminders/${r.id}`, { message: mm.querySelector('#rm-t').value }); toast('Mensagem salva.'); ctx.rerender(); } }] });
+      m.el.style.width = 'min(620px, calc(100vw - 32px))';
+    }
+  });
 }
