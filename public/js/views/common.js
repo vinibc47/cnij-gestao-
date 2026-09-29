@@ -9,10 +9,10 @@ export function rowActions(resKey, row, { onChange, edit = true, editOpts = {}, 
   return [
     ...extra,
     edit ? { label: 'Editar', icon: 'edit', fn: () => openForm(resKey, { id: row.id, onSaved: onChange, ...editOpts }) } : null,
+    meta.archivable ? { label: row.archived ? 'Restaurar' : 'Arquivar', icon: row.archived ? 'refresh' : 'archive', fn: async () => { try { await archiveRow(resKey, row, row.archived ? 0 : 1); onChange && onChange(); } catch (e) { fail(e); } } } : null,
     meta.canCreate ? { label: 'Duplicar', icon: 'copy', fn: async () => { try { await duplicateRow(resKey, row); onChange && onChange(); } catch (e) { fail(e); } } } : null,
-    meta.archivable ? { label: row.archived ? 'Restaurar' : 'Arquivar', icon: 'archive', fn: async () => { try { await archiveRow(resKey, row, row.archived ? 0 : 1); onChange && onChange(); } catch (e) { fail(e); } } } : null,
     '-',
-    { label: 'Excluir', icon: 'trash', danger: true, fn: async () => { try { if (await deleteRow(resKey, row, name)) onChange && onChange(); } catch (e) { fail(e); } } },
+    { label: meta.archivable ? 'Excluir definitivamente' : 'Excluir', icon: 'trash', danger: true, fn: async () => { try { if (await deleteRow(resKey, row, name)) onChange && onChange(); } catch (e) { fail(e); } } },
   ];
 }
 

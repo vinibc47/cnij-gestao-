@@ -72,7 +72,7 @@ R.projects = {
   search: ['p.name', 'p.code', 'c.name', 'p.city', 'p.address'], sort: 'p.due_date IS NULL, p.due_date ASC', archivable: true,
   fields: [
     F('name', 'Nome do projeto', 'text', { required: true }), F('code', 'Código', 'text', { readonly: true }),
-    F('client_id', 'Cliente', 'ref', { ref: 'clients', required: true, filter: true }),
+    F('client_id', 'Cliente', 'ref', { ref: 'clients', filter: true }),
     F('type', 'Tipo de projeto', 'option', { opt: 'projeto_tipo', filter: true }),
     F('status', 'Status', 'select', { list: 'PROJECT_STATUS', default: 'ativo', filter: true }),
     F('address', 'Endereço', 'text', { wide: true }), F('city', 'Cidade'),
@@ -284,24 +284,28 @@ R.quotes = {
   fields: [
     F('project_id', 'Projeto', 'ref', { ref: 'projects', required: true, filter: true }), F('work_id', 'Obra', 'ref', { ref: 'works' }),
     F('item', 'Item (ex.: Marcenaria)', 'option', { opt: 'fornecedor', free: true, required: true, filter: true }),
-    F('supplier_id', 'Fornecedor', 'ref', { ref: 'suppliers', filter: true }), F('amount', 'Valor', 'money', { required: true }),
+    F('supplier_id', 'Fornecedor', 'ref', { ref: 'suppliers', filter: true }), F('amount', 'Valor', 'money'),
     F('status', 'Status', 'select', { list: 'QUOTE_STATUS', default: 'recebido', filter: true }),
     F('received_at', 'Recebido em', 'date', { default: '$today' }), F('valid_until', 'Validade', 'date'),
     F('deadline_days', 'Prazo de execução (dias)', 'number'),
+    F('payment_terms', 'Condições de pagamento', 'text', { wide: true }),
+    F('included', 'Itens incluídos (um por linha)', 'textarea', { wide: true }),
+    F('excluded', 'Itens não incluídos (um por linha)', 'textarea', { wide: true }),
     F('client_visible', 'Liberar para o cliente', 'bool', { default: 0 }),
     F('client_notes', 'Observações para o cliente', 'textarea', { wide: true }),
     F('notes', 'Observações internas', 'textarea', { wide: true }),
   ],
   columns: ['item', 'supplier_name', 'project_name', 'amount', 'status', 'client_visible', 'client_selected'],
   read: (u) => P.hasModule(u, 'obras'), scope: scopeBy('q.project_id'), write: (u, row, d) => managers(u) || projOk(u, d, row),
+  beforeSave: (d, row) => { if ('amount' in d && d.amount == null) d.amount = 0; if (!row && d.amount == null) d.amount = 0; },
 };
 
 R.proposals = {
   table: 'proposals', alias: 'pr', label: 'Propostas', singular: 'Proposta', module: 'propostas', title: 'title',
-  select: `SELECT pr.*, c.name AS client_name, u.name AS responsible_name, p.name AS project_name,
+  select: `SELECT pr.*, COALESCE(c.name, pr.prospect_name) AS client_name, CASE WHEN pr.client_id IS NULL THEN 1 ELSE 0 END AS is_prospect, u.name AS responsible_name, p.name AS project_name,
            CASE WHEN pr.valid_until < date('now','localtime') AND pr.status IN ('enviada','visualizada','negociacao') THEN 1 ELSE 0 END AS is_expired
            FROM proposals pr LEFT JOIN clients c ON c.id = pr.client_id LEFT JOIN users u ON u.id = pr.responsible_id LEFT JOIN projects p ON p.id = pr.project_id`,
-  search: ['pr.title', 'pr.number', 'c.name', 'pr.contact_name', 'pr.address'], sort: 'pr.created_at DESC', archivable: true,
+  search: ['pr.title', 'pr.number', 'c.name', 'pr.prospect_name', 'pr.contact_name', 'pr.address'], sort: 'pr.created_at DESC', archivable: true,
   fields: [
     F('number', 'Número', 'text', { readonly: true }), F('client_id', 'Cliente', 'ref', { ref: 'clients', required: true, filter: true }),
     F('title', 'Projeto / escopo', 'text', { required: true }), F('project_type', 'Tipo de projeto', 'option', { opt: 'projeto_tipo' }),
@@ -525,6 +529,49 @@ R.time_entries = {
   scope: (u) => (P.isManager(u) ? { sql: '1=1', params: [] } : { sql: 'te.user_id = ?', params: [u.id] }),
   write: (u, row, d) => managers(u) || ((!row || row.user_id === u.id) && (!d || !d.user_id || d.user_id === u.id)),
   beforeCreate: (d, u) => { if (!d.user_id || !P.isManager(u)) d.user_id = d.user_id && P.isManager(u) ? d.user_id : u.id; },
+};
+
+R.meeting_minutes = {
+  table: 'meeting_minutes', alias: 'mm', label: 'Atas de reunião', singular: 'Ata', module: 'atas', title: 'title',
+  select: `SELECT mm.*, c.name AS client_name, p.name AS project_name, p.code AS project_code, u.name AS created_by_name FROM meeting_minutes mm
+           LEFT JOIN clients c ON c.id = mm.client_id LEFT JOIN projects p ON p.id = mm.project_id LEFT JOIN users u ON u.id = mm.created_by`,
+  search: ['mm.title', 'mm.participants', 'mm.content', 'c.name', 'p.name', 'p.code', 'mm.number'], sort: 'mm.date DESC, mm.id DESC', archivable: true, dateField: 'date',
+  fields: [
+    F('number', 'Número', 'text', { readonly: true }), F('date', 'Data da reunião', 'date', { required: true, default: '$today' }),
+    F('client_id', 'Cliente', 'ref', { ref: 'clients', filter: true }), F('project_id', 'Projeto', 'ref', { ref: 'projects', filter: true, dependsOn: 'client_id' }),
+    F('title', 'Assunto / título', 'text', { wide: true }), F('location', 'Local', 'text'),
+    F('participants', 'Participantes', 'textarea', { wide: true }), F('content', 'Assuntos e decisões', 'textarea', { wide: true }),
+    F('next_steps', 'Próximos passos', 'json', { wide: true }), F('client_visible', 'Mostrar na Área do Cliente', 'bool', { default: 0 }),
+  ],
+  columns: ['date', 'title', 'client_name', 'project_name'],
+  read: (u) => P.hasModule(u, 'atas'),
+  scope: (u) => { if (P.isManager(u)) return { sql: '1=1', params: [] }; const sc = P.projectScope(u, 'mm.project_id'); return { sql: `(mm.created_by = ? OR ${sc.sql})`, params: [u.id, ...sc.params] }; },
+  write: (u, row, d) => managers(u) || !row || row.created_by === u.id || projOk(u, d, row),
+  create: (u, d) => managers(u) || !d.project_id || projOk(u, d),
+  beforeCreate: (d, u) => { d.created_by = u.id; d.number = proj.nextCode('meeting_minutes', 'ATA'); },
+  beforeSave: (d, row) => {
+    if (d.project_id) { const p = get('SELECT client_id FROM projects WHERE id = ?', d.project_id); if (p && p.client_id && !d.client_id && !(row && row.client_id)) d.client_id = p.client_id; const cid = d.client_id !== undefined ? d.client_id : row && row.client_id; if (p && cid && p.client_id !== cid) throw new HttpError(400, 'O projeto selecionado não pertence a este cliente.'); }
+    if (!d.title && !(row && row.title)) d.title = 'Reunião';
+  },
+};
+
+R.receipts = {
+  table: 'receipts', alias: 'rc', label: 'Recibos', singular: 'Recibo', module: 'recibos', title: 'number',
+  select: `SELECT rc.*, c.name AS client_name, p.name AS project_name, p.code AS project_code, ct.number AS contract_number, i.status AS income_status, i.description AS income_description
+           FROM receipts rc LEFT JOIN clients c ON c.id = rc.client_id LEFT JOIN projects p ON p.id = rc.project_id LEFT JOIN contracts ct ON ct.id = rc.contract_id LEFT JOIN incomes i ON i.id = rc.income_id`,
+  search: ['rc.number', 'rc.payer_name', 'rc.description', 'c.name', 'p.name'], sort: 'rc.id DESC', archivable: true, dateField: 'paid_at',
+  fields: [F('number', 'Número', 'text', { readonly: true }), F('status', 'Status', 'select', { list: 'RECEIPT_STATUS', filter: true, readonly: true }), F('client_id', 'Cliente', 'ref', { ref: 'clients', filter: true }), F('project_id', 'Projeto', 'ref', { ref: 'projects', filter: true })],
+  columns: ['number', 'payer_name', 'amount', 'paid_at', 'status'],
+  read: fin, write: fin,
+};
+
+R.site_signs = {
+  table: 'site_signs', alias: 'sg', label: 'Placas de obra', singular: 'Placa', module: 'placas', title: 'title',
+  select: `SELECT sg.*, c.name AS client_name, p.name AS project_name, p.code AS project_code FROM site_signs sg LEFT JOIN clients c ON c.id = sg.client_id LEFT JOIN projects p ON p.id = sg.project_id`,
+  search: ['sg.title', 'c.name', 'p.name'], sort: 'sg.updated_at DESC, sg.id DESC', archivable: true,
+  fields: [F('title', 'Nome da placa', 'text', { required: true }), F('client_id', 'Cliente', 'ref', { ref: 'clients', filter: true }), F('project_id', 'Projeto', 'ref', { ref: 'projects', filter: true })],
+  columns: ['title', 'client_name', 'project_name', 'size'],
+  read: (u) => P.hasModule(u, 'placas'), write: (u) => P.hasModule(u, 'placas'),
 };
 
 // Filtros rápidos (presets) — aplicados sobre as colunas da consulta (alias x)

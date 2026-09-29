@@ -1,4 +1,4 @@
-import { S, api, html, el, toHTML, icon, money, date, dateShort, relDay, badge, label, prio, progress, avatar, user, openForm, drawer, checklist, comments, attachments, dropzone, fileRow, fileUrl, toast, fail, menu, confirmDialog, datetime, today, isManager, can, table, pct, num, deleteRow, $$, esc } from '../lib.js';
+import { S, api, html, el, toHTML, icon, money, date, dateShort, relDay, badge, label, prio, progress, avatar, user, openForm, drawer, checklist, comments, attachments, dropzone, fileRow, fileUrl, toast, fail, menu, confirmDialog, datetime, today, isManager, can, table, pct, num, deleteRow, $$, esc, archiveRow, modal, copyText } from '../lib.js';
 import { listPage, rowActions } from './common.js';
 import { quotesPanel } from './quotes.js';
 import { newEntry, entryDrawer } from './finance.js';
@@ -97,6 +97,9 @@ async function detail(ctx, id) {
     mgr && !['encerrado'].includes(p.status) ? { label: 'Encerrar projeto', icon: 'check', fn: () => closeProject(p, reload) } : null,
     p.status === 'encerrado' && mgr ? { label: 'Reabrir projeto', icon: 'refresh', fn: async () => { await api.put(`/r/projects/${id}`, { status: 'ativo' }); reload(); } } : null,
     !d.works.length && can('obras') ? { label: 'Iniciar obra', icon: 'helmet', fn: () => openForm('works', { values: { project_id: id }, onSaved: (w) => ctx.go('#/obras/' + w.id) }) } : null,
+    { label: 'Aviso de atualização do portal', icon: 'chat', fn: () => portalNotice(p) },
+    can('atas') ? { label: 'Nova ata de reunião', icon: 'diary', fn: () => ctx.go(`#/atas/nova?projeto=${id}`) } : null,
+    can('placas') ? { label: 'Criar placa de obra', icon: 'sign', fn: async () => { try { const sg = await api.post('/signs', { project_id: id }); ctx.go(`#/placas/${sg.id}`); } catch (er) { fail(er); } } } : null,
     { label: 'Nova reunião', icon: 'calendar', fn: () => openForm('events', { values: { project_id: id, client_id: p.client_id, type: 'reuniao' }, onSaved: reload }) },
     { label: 'Lançar horas', icon: 'clock', fn: () => openForm('time_entries', { values: { project_id: id }, onSaved: reload }) },
     fin ? { label: 'Nova receita do projeto', icon: 'in', fn: () => newEntry('incomes', { project_id: id, client_id: p.client_id }, reload) } : null,
@@ -105,6 +108,56 @@ async function detail(ctx, id) {
     ...(mgr ? rowActions('projects', p, { onChange: () => ctx.go('#/projetos'), edit: false }) : []),
   ]);
   showTab(tabs.find((t) => t[0] === activeTab) ? activeTab : 'geral');
+}
+
+// Aviso de atualização do portal: texto pronto para copiar e enviar (nunca é enviado automaticamente).
+// Lista apenas o que já está liberado para o cliente; notas internas nunca entram.
+const KIND_LABEL = { revisao: 'Revisão de projeto', arquivo: 'Arquivo', imagem: 'Imagem / render', obra: 'Atualização da obra', orcamento: 'Orçamento para aprovação', etapa: 'Etapa concluída', ata: 'Ata de reunião' };
+async function portalNotice(p) {
+  let info;
+  try { info = await api.get(`/projects/${p.id}/portal-updates`); } catch (e) { return fail(e); }
+  const body = el(html`<div class="col" style="gap:12px">
+    ${!info.client ? html`<div class="callout warn">Este projeto não tem cliente vinculado.</div>` : !info.has_portal_user ? html`<div class="callout warn">O cliente ainda não tem acesso à Área do Cliente. Crie o acesso antes de enviar o aviso.</div>` : ''}
+    <div class="row wrap gap-8"><label class="small muted">Novidades desde</label><input type="date" data-since value="${info.since}" style="max-width:170px">
+      ${info.last_notice ? html`<span class="tiny muted">último aviso em ${datetime(info.last_notice.created_at)}${info.last_notice.user_name ? ' por ' + info.last_notice.user_name : ''}</span>` : ''}</div>
+    <div data-items></div>
+    <div class="field"><label>Mensagem (edite à vontade)</label><textarea data-raw data-msg rows="12"></textarea></div>
+    <div class="tiny muted">Somente conteúdos liberados na Área do Cliente aparecem aqui. A mensagem não é enviada automaticamente.</div>
+  </div>`);
+  let items = info.items;
+  const sel = new Set(items.map((i) => i.key));
+  const first = (n) => String(n || '').split(/\s+/)[0];
+  const compose = () => {
+    const chosen = items.filter((i) => sel.has(i.key));
+    const lines = chosen.map((i) => `• ${KIND_LABEL[i.kind] || 'Atualização'}: ${i.label}`);
+    return [`Olá, ${first(info.client && info.client.name) || 'tudo bem'}! Tudo bem?`, '',
+      `Passando para avisar que a Área do Cliente do projeto ${info.project.name} foi atualizada${chosen.length ? ' com:' : '.'}`,
+      ...(lines.length ? [...lines, ''] : ['']),
+      `Para conferir, acesse: ${info.portal_url}`, '',
+      'Qualquer dúvida, estamos à disposição.', '', `${info.office.name}${info.office.tagline ? ' · ' + info.office.tagline : ''}`].join('\n');
+  };
+  const msg = body.querySelector('[data-msg]');
+  let edited = false; msg.addEventListener('input', () => { edited = true; });
+  const renderItems = () => {
+    body.querySelector('[data-items]').innerHTML = toHTML(items.length ? html`<div class="eyebrow mb-8">O que foi disponibilizado</div><div class="col" style="gap:6px">${items.map((i) => html`<label class="check"><input type="checkbox" value="${i.key}" ${sel.has(i.key) ? 'checked' : ''}> <span>${KIND_LABEL[i.kind] || 'Atualização'}: ${i.label} <span class="tiny muted">${date(i.date)}</span></span></label>`)}</div>`
+      : html`<div class="empty sm">Nenhum conteúdo novo liberado ao cliente neste período.</div>`);
+    if (!edited) msg.value = compose();
+  };
+  renderItems();
+  body.querySelector('[data-items]').addEventListener('change', (e) => { const c = e.target.closest('input'); if (!c) return; if (c.checked) sel.add(c.value); else sel.delete(c.value); if (!edited || confirm('Atualizar a mensagem com os itens selecionados? Suas edições serão substituídas.')) { edited = false; msg.value = compose(); } });
+  body.querySelector('[data-since]').onchange = async (e) => { try { info = await api.get(`/projects/${p.id}/portal-updates?since=${e.target.value}`); items = info.items; sel.clear(); items.forEach((i) => sel.add(i.key)); edited = false; renderItems(); } catch (er) { fail(er); } };
+  const wa = info.client && (info.client.whatsapp || info.client.phone);
+  modal({ title: 'Aviso de atualização do portal', body, actions: [
+    { label: 'Fechar' },
+    ...(wa ? [{ label: 'Abrir no WhatsApp', fn: () => { const n = String(wa).replace(/\D/g, '').replace(/^55/, ''); window.open(`https://wa.me/55${n}?text=${encodeURIComponent(msg.value)}`, '_blank'); api.post(`/projects/${p.id}/portal-notice`, { message: msg.value, items: [...sel] }).catch(() => {}); return false; } }] : []),
+    { label: 'Copiar mensagem', primary: true, fn: async () => {
+      if (!msg.value.trim()) { toast('A mensagem está vazia.', { error: true }); return false; }
+      const okc = await copyText(msg.value);
+      if (!okc) { toast('Não foi possível copiar automaticamente. Selecione o texto e copie manualmente.', { error: true }); msg.select(); return false; }
+      toast('Mensagem copiada. Cole no WhatsApp do cliente.');
+      api.post(`/projects/${p.id}/portal-notice`, { message: msg.value, items: [...sel] }).catch(() => {});
+    } },
+  ] });
 }
 
 async function closeProject(p, reload) {
@@ -280,7 +333,7 @@ const TABS = {
     const docs = box.querySelector('[data-docs]');
     if (!d.documents.length) docs.innerHTML = '<div class="muted small">Nenhum documento.</div>';
     const del = async (doc) => { if (await deleteRow('documents', doc, doc.title)) reload(); };
-    d.documents.forEach((doc) => { const r = fileRow(doc, { onDelete: del }); addVisToggle(r, doc, reload); docs.appendChild(r); });
+    d.documents.forEach((doc) => { const r = fileRow(doc, { onArchive: async (x) => { await archiveRow('documents', x, 1); reload(); } }); addVisToggle(r, doc, reload); docs.appendChild(r); });
     const imgs = box.querySelector('[data-imgs]');
     imgs.appendChild(d.images.length ? el(html`<div class="gallery">${d.images.map((i) => html`<a href="${fileUrl(i, true)}" target="_blank" rel="noopener" title="${i.title}"><img src="${fileUrl(i, true)}" loading="lazy" alt="${i.title}">${i.client_visible ? html`<span class="badge info plain" style="position:absolute;left:6px;bottom:6px">cliente</span>` : ''}</a>`)}</div>`) : el('<div class="muted small">Nenhuma imagem.</div>'));
     box.querySelector('[data-drop]').appendChild(dropzone(() => ({ project_id: p.id, client_id: p.client_id, category: box.querySelector('[data-cat]').value, client_visible: box.querySelector('[data-vis]').checked ? '1' : '' }), reload));

@@ -70,6 +70,7 @@ app.use('/api', auth.requireStaff);
 app.use('/api', require('./routes/core'));
 app.use('/api', require('./routes/ops').router);
 app.use('/api', require('./routes/docs').router);
+app.use('/api', require('./routes/extra').router);
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/r', crud.router);
@@ -92,7 +93,7 @@ app.use((err, req, res, next) => {
   if (/UNIQUE constraint/i.test(msg || '')) { status = 400; msg = 'Registro duplicado.'; }
   if (/FOREIGN KEY constraint/i.test(msg || '')) { status = 400; msg = 'Existem registros vinculados. Arquive em vez de excluir.'; }
   if (status >= 500) { console.error(err); msg = 'Erro interno. Tente novamente.'; }
-  res.status(status).json({ error: msg });
+  res.status(status).json({ error: msg, ...(err.needClient ? { need_client: true } : {}) });
 });
 
 const PORT = Number(process.env.PORT) || 3000;

@@ -29,7 +29,7 @@ router.get('/overview', wrap((req, res) => {
     p.works = all('SELECT id, name, status, progress, start_date, due_date FROM works WHERE project_id = ? AND archived = 0', p.id).map((w) => ({
       ...w,
       phases: all('SELECT name, status, progress FROM work_phases WHERE work_id = ? ORDER BY position', w.id),
-      updates: all("SELECT id, date, kind, description, decisions, pending FROM work_logs WHERE work_id = ? AND client_visible = 1 ORDER BY date DESC LIMIT 20", w.id)
+      updates: all("SELECT id, date, kind, description, decisions FROM work_logs WHERE work_id = ? AND client_visible = 1 ORDER BY date DESC LIMIT 20", w.id)
         .map((l) => ({ ...l, photos: all("SELECT id, title, mime FROM documents WHERE entity = 'work_logs' AND entity_id = ? AND mime LIKE 'image/%'", l.id) })),
     }));
     const docs = all(`SELECT ${DOC_COLS} FROM documents d WHERE d.project_id = ? AND d.client_visible = 1 AND d.archived = 0 ORDER BY d.created_at DESC`, p.id);
@@ -50,11 +50,18 @@ router.get('/overview', wrap((req, res) => {
   const incomes = all(`SELECT i.id, i.description, i.amount, i.due_date, i.paid_at, i.status, i.installment_no, i.installment_total, i.project_id, i.method
                        FROM incomes i WHERE i.client_id = ? AND i.status <> 'cancelado' AND COALESCE(i.category,'') <> 'Reserva técnica (RT)' ORDER BY i.due_date`, cid)
     .map((i) => ({ ...i, receipts: all("SELECT id, title, file_name FROM documents WHERE entity = 'incomes' AND entity_id = ? AND client_visible = 1", i.id) }));
+  // recibos emitidos e atas liberadas pelo escritório
+  const receipts = all("SELECT id, number, amount, paid_at, income_id, project_id FROM receipts WHERE client_id = ? AND status = 'emitido' AND archived = 0 ORDER BY paid_at DESC", cid);
+  incomes.forEach((i) => { i.receipt_docs = receipts.filter((r) => r.income_id === i.id); });
+  for (const p of projects) {
+    p.minutes = all("SELECT id, number, date, title, content, next_steps FROM meeting_minutes WHERE project_id = ? AND client_visible = 1 AND archived = 0 ORDER BY date DESC", p.id)
+      .map((a) => ({ ...a, next_steps: (() => { try { return JSON.parse(a.next_steps || '[]'); } catch { return []; } })() }));
+  }
   const contracts = all("SELECT id, number, amount, signed_at, start_date, end_date, installments, status, project_id FROM contracts WHERE client_id = ? AND status <> 'cancelado'", cid);
   const events = all(`SELECT id, title, type, start_at, end_at, all_day, location FROM events WHERE client_id = ? AND client_visible = 1 AND status = 'agendado' AND substr(start_at,1,10) >= ? ORDER BY start_at LIMIT 10`, cid, today());
   const sum = (f) => round2(incomes.filter(f).reduce((s, i) => s + i.amount, 0));
   res.json({
-    client, projects, events, contracts,
+    client, projects, events, contracts, receipts,
     finance: {
       contracted: round2(contracts.reduce((s, c) => s + c.amount, 0)) || round2(projects.reduce((s, p) => s + (p.contract_value || 0), 0)),
       paid: sum((i) => i.status === 'recebido'), pending: sum((i) => ['a_receber', 'previsto'].includes(i.status)), overdue: sum((i) => i.status === 'vencido'),
@@ -79,6 +86,20 @@ router.post('/quotes/:id/select', wrap((req, res) => {
   res.json({ ok: true });
 }));
 
+router.get('/receipts/:id/pdf', wrap(async (req, res) => {
+  const r = get(`SELECT rc.*, p.name project_name, p.code project_code, ct.number contract_number FROM receipts rc LEFT JOIN projects p ON p.id = rc.project_id LEFT JOIN contracts ct ON ct.id = rc.contract_id
+    WHERE rc.id = ? AND rc.client_id = ? AND rc.status = 'emitido' AND rc.archived = 0`, Number(req.params.id), req.user.client_id);
+  if (!r) throw new HttpError(404, 'Recibo não encontrado.');
+  const pdf = require('../pdf'); const { receiptDoc } = require('./extra');
+  await pdf.send(res, receiptDoc(r, {}), `Recibo ${String(r.number).replace('/', '-')}.pdf`, req.query.download === '1');
+}));
+router.get('/minutes/:id/pdf', wrap(async (req, res) => {
+  const a = get(`SELECT mm.*, c.name client_name, p.name project_name, p.code project_code, u.name created_by_name FROM meeting_minutes mm JOIN projects p ON p.id = mm.project_id LEFT JOIN clients c ON c.id = mm.client_id LEFT JOIN users u ON u.id = mm.created_by
+    WHERE mm.id = ? AND p.client_id = ? AND mm.client_visible = 1 AND mm.archived = 0`, Number(req.params.id), req.user.client_id);
+  if (!a) throw new HttpError(404, 'Ata não encontrada.');
+  const { minutesDoc } = require('./extra'); const pdf = require('../pdf');
+  await pdf.send(res, minutesDoc(a), `Ata ${a.number || ''}.pdf`, req.query.download === '1');
+}));
 router.get('/files/:id', wrap((req, res) => {
   const d = get(`SELECT d.* FROM documents d LEFT JOIN projects p ON p.id = d.project_id WHERE d.id = ? AND (p.client_id = ? OR d.client_id = ?)`, req.params.id, req.user.client_id, req.user.client_id);
   if (!d) throw new HttpError(404, 'Arquivo não encontrado.');

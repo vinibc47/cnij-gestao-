@@ -15,6 +15,8 @@ const F = path.join(__dirname, 'fonts');
 const printer = new PdfPrinter({
   Inter: { normal: path.join(F, 'inter-latin-400-normal.ttf'), bold: path.join(F, 'inter-latin-600-normal.ttf'), italics: path.join(F, 'inter-latin-400-normal.ttf'), bolditalics: path.join(F, 'inter-latin-600-normal.ttf') },
   InterMedium: { normal: path.join(F, 'inter-latin-500-normal.ttf'), bold: path.join(F, 'inter-latin-600-normal.ttf'), italics: path.join(F, 'inter-latin-500-normal.ttf'), bolditalics: path.join(F, 'inter-latin-600-normal.ttf') },
+  Jost: { normal: path.join(F, 'jost-latin-400-normal.ttf'), bold: path.join(F, 'jost-latin-400-normal.ttf'), italics: path.join(F, 'jost-latin-400-normal.ttf'), bolditalics: path.join(F, 'jost-latin-400-normal.ttf') },
+  JostLight: { normal: path.join(F, 'jost-latin-300-normal.ttf'), bold: path.join(F, 'jost-latin-300-normal.ttf'), italics: path.join(F, 'jost-latin-300-normal.ttf'), bolditalics: path.join(F, 'jost-latin-300-normal.ttf') },
   Serif: { normal: path.join(F, 'cormorant-garamond-latin-500-normal.ttf'), bold: path.join(F, 'cormorant-garamond-latin-600-normal.ttf'), italics: path.join(F, 'cormorant-garamond-latin-500-normal.ttf'), bolditalics: path.join(F, 'cormorant-garamond-latin-600-normal.ttf') },
 });
 
@@ -121,6 +123,15 @@ function tokensToContent(tokens, { justify = false } = {}) {
           if (k >= 0 && nodes[k]._right) { const r = nodes.splice(k); sg.stack.unshift(...r.filter((x) => x._right).map((x) => { delete x._right; return x; })); }
           nodes.push(sg);
         }
+        else if (tk.name === 'servicos') {
+          const list = d || [];
+          if (list.some((x) => x.amount != null)) {
+            const all_ = list.every((x) => x.amount != null);
+            nodes.push({ ...dataTable({ headers: ['Serviço', 'Descrição', 'Valor'], widths: [150, '*', 90], align: ['left', 'left', 'right'],
+              rows: list.map((x) => [{ text: x.label, bold: true }, x.description || '', x.amount != null ? docs.brl(x.amount) : 'a combinar']),
+              foot: all_ && list.length > 1 ? [{ text: 'TOTAL DOS SERVIÇOS', colSpan: 2, alignment: 'right', characterSpacing: 0.6 }, {}, { text: docs.brl(list.reduce((a, x) => a + x.amount, 0)), alignment: 'right' }] : null }), _table: true });
+          } else list.forEach((x) => nodes.push(bullet(x.description ? `**${x.label}** — ${x.description}` : `**${x.label}**`, justify)));
+        }
         else if (tk.name === 'condicoes') (d || []).forEach((l) => nodes.push(/^[-•]\s+/.test(l) ? bullet(l.replace(/^[-•]\s+/, ''), justify) : para(l, justify)));
         else (d || []).forEach((l) => nodes.push(bullet(l, justify)));
         break;
@@ -143,19 +154,26 @@ function tokensToContent(tokens, { justify = false } = {}) {
 }
 
 // ------------------------------ documento ------------------------------
-function build({ title, purpose, ident = [], content = [], issuedAt, draft = false, info = {} }) {
+function build({ title, purpose, ident = [], content = [], issuedAt, draft = false, info = {}, landscape = false }) {
+  const cw = landscape ? 841.89 - M.l - M.r : CONTENT_W;
   const o = docs.office();
   const issued = docs.brDate(String(issuedAt || today()).slice(0, 10));
   const contact = [o.address, o.phone, o.email].filter(Boolean).join('  ·  ');
   let logo = null; try { logo = logoData(); } catch { logo = null; }
+  // a margem inferior do último bloco não pode criar uma página em branco no fim do documento
+  const items = [...content];
+  while (items.length && (items[items.length - 1] === '' || items[items.length - 1] == null)) items.pop();
+  const last = items[items.length - 1];
+  if (last && typeof last === 'object' && Array.isArray(last.margin) && last.margin.length === 4) items[items.length - 1] = { ...last, margin: [last.margin[0], last.margin[1], last.margin[2], 0] };
   return {
-    pageSize: 'A4', pageMargins: [M.l, M.t, M.r, M.b],
+    pageSize: 'A4', pageOrientation: landscape ? 'landscape' : 'portrait', pageMargins: [M.l, M.t, M.r, M.b],
     info: { title: info.title || title, author: o.name, subject: purpose, creator: 'CN&IJ Gestão', producer: 'CN&IJ Gestão' },
     watermark: draft ? { text: 'RASCUNHO', color: '#b0473b', opacity: 0.06, bold: true, fontSize: 90 } : undefined,
-    header: () => (logo ? { columns: [{ text: '', width: '*' }, { image: logo, fit: [104, 40] }], margin: [M.l, 30, M.r, 0] } : null),
+    // logo oficial centralizada no topo de todas as páginas (proporções preservadas)
+    header: () => (logo ? { image: logo, fit: [112, 40], alignment: 'center', margin: [M.l, 28, M.r, 0] } : null),
     footer: (page, pages) => ({
       margin: [M.l, 22, M.r, 0],
-      stack: [rule(CONTENT_W, LINE, 0.6),
+      stack: [rule(cw, LINE, 0.6),
         { columns: [{ text: `${o.name.toUpperCase()}  ·  ${o.tagline.toUpperCase()}`, fontSize: 6.8, characterSpacing: 0.6, color: MUTED, width: '*' }, { text: `Emitido em ${issued}`, fontSize: 7.2, color: MUTED, width: 'auto', margin: [0, 0, 18, 0] }, { text: `Página ${page} de ${pages}`, fontSize: 7.2, color: MUTED, width: 'auto' }], margin: [0, 7, 0, 0] },
         contact ? { text: contact, fontSize: 6.8, color: SOFT, margin: [0, 3, 0, 0] } : ''],
     }),
@@ -163,13 +181,13 @@ function build({ title, purpose, ident = [], content = [], issuedAt, draft = fal
       { text: title, style: 'title' },
       purpose ? { text: purpose, style: 'purpose' } : spacer(6),
       identGrid(ident),
-      ...content,
+      ...items,
     ],
     // títulos de seção não ficam sozinhos no pé da página: se começarem nos últimos ~85 pt úteis, vão para a próxima
-    pageBreakBefore: (node) => node.headlineLevel === 1 && !!node.startPosition && node.startPosition.top > 841.89 - M.b - 85,
+    pageBreakBefore: (node) => node.headlineLevel === 1 && !!node.startPosition && node.startPosition.top > (landscape ? 595.28 : 841.89) - M.b - 85,
     defaultStyle: { font: 'Inter', fontSize: 9.4, color: INK, lineHeight: 1.32 },
     styles: {
-      title: { font: 'Serif', fontSize: 27, color: INK, lineHeight: 1.05, margin: [0, 0, 0, 5] },
+      title: { font: 'Serif', fontSize: 27, color: INK, lineHeight: 1.05, margin: [0, 6, 0, 5] },
       purpose: { fontSize: 9.4, color: MUTED, lineHeight: 1.4, margin: [0, 0, 0, 16] },
       h1: { font: 'InterMedium', fontSize: 9, characterSpacing: 1.1, color: INK, margin: [0, 12, 0, 0] },
       h2: { font: 'Serif', fontSize: 14.5, color: INK, margin: [0, 6, 0, 3], lineHeight: 1.1 },
@@ -202,4 +220,11 @@ async function send(res, docDef, filename, download) {
   res.end(buf);
 }
 
-module.exports = { build, render, send, tokensToContent, sectionTitle, subTitle, para, note, bullet, numbered, dataTable, identGrid, signatures, spacer, muted, rich, rule, logoPath, BRANDING_DIR, CONTENT_W, FILL, MUTED };
+// Placa de obra: página no tamanho físico escolhido, arte vetorial (SVG) ocupando a página inteira
+function signDoc(svg, wmm, hmm, title) {
+  const W = wmm * 72 / 25.4; const H = hmm * 72 / 25.4;
+  return { pageSize: { width: W, height: H }, pageMargins: [0, 0, 0, 0], info: { title, author: docs.office().name, creator: 'CN&IJ Gestão' },
+    content: [{ svg, width: W, height: H, font: 'Inter' }], defaultStyle: { font: 'Inter' } };
+}
+
+module.exports = { signDoc, build, render, send, tokensToContent, sectionTitle, subTitle, para, note, bullet, numbered, dataTable, identGrid, signatures, spacer, muted, rich, rule, logoPath, BRANDING_DIR, CONTENT_W, FILL, MUTED };

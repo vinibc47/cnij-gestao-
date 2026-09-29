@@ -1,9 +1,9 @@
 // Componentes compartilhados pelos editores de proposta e contrato:
 // campos, plano de parcelas com conferência, editor de texto do modelo.
-import { html, raw, el, toHTML, esc, icon, money, date, rowsEditor, round2, parseNum, brl2, addDays, today, S } from '../lib.js';
+import { html, raw, el, toHTML, esc, icon, money, date, rowsEditor, round2, parseNum, brl2, addDays, today, S, applySentence } from '../lib.js';
 
 export const PROJECT_TYPES = ['arquitetonico', 'interiores', 'arq_interiores'];
-export const svcLabel = (v) => (S.meta.lists.SERVICE_TYPES.find((x) => x.value === v) || {}).label || '—';
+export const svcLabel = (v) => ((S.meta.lists.SERVICE_TYPES_ALL || S.meta.lists.SERVICE_TYPES).find((x) => x.value === v) || {}).label || '—';
 
 // Campo simples (texto, data, número, área de texto, seleção, dinheiro)
 export function fld(name, label, value, { type = 'text', wide, hint, options, req, placeholder = '', rows = 3, list, attrs = '' } = {}) {
@@ -19,10 +19,10 @@ export function fld(name, label, value, { type = 'text', wide, hint, options, re
 export function readFields(root) {
   const out = {};
   root.querySelectorAll('input[name], select[name], textarea[name]').forEach((i) => {
-    if (i.closest('[data-skip]')) return;
+    if (i.closest('[data-skip]') || i.disabled) return;
     if (i.type === 'checkbox') out[i.name] = i.checked ? 1 : 0;
     else if (i.hasAttribute('data-money')) out[i.name] = i.value.trim() === '' ? null : parseNum(i.value);
-    else out[i.name] = i.value;
+    else { applySentence(i); out[i.name] = i.value; }
   });
   return out;
 }

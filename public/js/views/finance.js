@@ -124,7 +124,9 @@ export async function entryDrawer(res, id, onChange) {
   const d = drawer({ title: r.description, sub: inc ? 'Entrada' : 'Saída', body });
   d.foot.classList.remove('hidden');
   d.foot.innerHTML = toHTML(html`<button class="btn danger" data-del>${icon('trash')}</button><span class="grow"></span><button class="btn" data-dup>${icon('copy')} Duplicar</button><button class="btn" data-edit>${icon('edit')} Editar</button>
+    ${inc && r.status === 'recebido' && S.meta.resources.receipts ? html`<button class="btn" data-receipt>${icon('receipt')} Emitir recibo</button>` : ''}
     ${open ? html`<button class="btn primary" data-pay>${icon('check')} ${inc ? 'Registrar recebimento' : 'Registrar pagamento'}</button>` : r.status !== 'cancelado' ? html`<button class="btn" data-unpay>${icon('refresh')} Estornar</button>` : ''}`);
+  const rb = d.foot.querySelector('[data-receipt]'); if (rb) rb.onclick = async () => { try { const x = await api.post('/receipts', { income_id: r.id, client_id: r.client_id }); d.close(); location.hash = `#/recibos/${x.id}`; } catch (e) { fail(e); } };
   const done = () => { d.close(); onChange && onChange(); };
   d.foot.querySelector('[data-edit]').onclick = () => { d.close(); openForm(res, { id: r.id, onSaved: onChange }); };
   d.foot.querySelector('[data-dup]').onclick = async () => { await api.post(`/r/${res}/${r.id}/duplicate`); toast('Duplicado.'); done(); };
@@ -248,7 +250,7 @@ async function reminders(ctx, root, tabs) {
     if (e.target.closest('[data-sent]')) { await api.post(`/reminders/${r.id}/sent`); toast('Lembrete marcado como enviado. A parcela continua em aberto até o pagamento ser registrado.'); ctx.rerender(); }
     if (e.target.closest('[data-unsent]')) { await api.post(`/reminders/${r.id}/unsent`); ctx.rerender(); }
     if (e.target.closest('[data-edit]')) {
-      const m = modal({ title: 'Editar mensagem', body: html`<p class="small muted" style="margin-top:0">${r.client_name} · ${money(r.amount)} · vencimento ${date(r.due_date)}</p><div class="field"><textarea id="rm-t" rows="14">${r.message}</textarea></div>`,
+      const m = modal({ title: 'Editar mensagem', body: html`<p class="small muted" style="margin-top:0">${r.client_name} · ${money(r.amount)} · vencimento ${date(r.due_date)}</p><div class="field"><textarea id="rm-t" rows="14" data-raw>${r.message}</textarea></div>`,
         actions: [{ label: 'Restaurar texto padrão', fn: async () => { await api.put(`/reminders/${r.id}`, { reset: true }); toast('Texto padrão restaurado.'); ctx.rerender(); } }, { label: 'Cancelar' }, { label: 'Salvar mensagem', primary: true, fn: async (mm) => { await api.put(`/reminders/${r.id}`, { message: mm.querySelector('#rm-t').value }); toast('Mensagem salva.'); ctx.rerender(); } }] });
       m.el.style.width = 'min(620px, calc(100vw - 32px))';
     }

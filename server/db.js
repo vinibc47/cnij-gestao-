@@ -49,16 +49,38 @@ const MIGRATIONS = {
     down_payment: 'REAL', payment_plan: 'TEXT', payment_method: 'TEXT', pix_key: 'TEXT', pix_name: 'TEXT', conditions: 'TEXT',
     extra: 'TEXT', body: 'TEXT', template_id: 'INTEGER', template_version: 'INTEGER', approved_by: 'TEXT', approved_at: 'TEXT',
     approval_notes: 'TEXT', approved_user_id: 'INTEGER',
+    services: 'TEXT', prospect_name: 'TEXT', prospect_doc: 'TEXT', prospect_phone: 'TEXT', prospect_email: 'TEXT', prospect_address: 'TEXT', prospect_city: 'TEXT',
+    client_converted_at: 'TEXT',
   },
+  quotes: { included: 'TEXT', excluded: 'TEXT', payment_terms: 'TEXT' },
   contracts: { service_type: 'TEXT', template_id: 'INTEGER', template_version: 'INTEGER', body: 'TEXT', data: 'TEXT', payment_plan: 'TEXT' },
   works: { budget_notes: 'TEXT' },
   work_phases: { responsible: 'TEXT', pending: 'TEXT', next_action: 'TEXT' },
 };
+// Propostas podem existir antes do cadastro do cliente (interessado): client_id deixa de ser obrigatório.
+// O SQLite não altera restrições de coluna, então a tabela é recriada preservando todos os dados.
+function relaxProposalClient() {
+  const col = all('PRAGMA table_info(proposals)').find((c) => c.name === 'client_id');
+  if (!col || !col.notnull) return;
+  const sql = get("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'proposals'").sql;
+  const newSql = sql.replace(/client_id\s+INTEGER\s+NOT\s+NULL/i, 'client_id INTEGER').replace(/CREATE TABLE\s+(IF NOT EXISTS\s+)?"?proposals"?/i, 'CREATE TABLE proposals_mig');
+  const cols = all('PRAGMA table_info(proposals)').map((c) => c.name).join(', ');
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    db.exec('BEGIN');
+    db.exec(newSql);
+    db.exec(`INSERT INTO proposals_mig (${cols}) SELECT ${cols} FROM proposals`);
+    db.exec('DROP TABLE proposals');
+    db.exec('ALTER TABLE proposals_mig RENAME TO proposals');
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; } finally { db.exec('PRAGMA foreign_keys = ON'); }
+}
 function migrate() {
   for (const [table, cols] of Object.entries(MIGRATIONS)) {
     const have = new Set(all(`PRAGMA table_info(${table})`).map((c) => c.name));
     for (const [col, def] of Object.entries(cols)) if (!have.has(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
   }
+  relaxProposalClient();
   // status de proposta simplificados: Rascunho, Enviada, Aprovada, Recusada, Expirada
   run("UPDATE proposals SET status = 'enviada' WHERE status IN ('visualizada','negociacao')");
 }

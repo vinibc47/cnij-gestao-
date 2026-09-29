@@ -28,7 +28,7 @@ const needManager = (u) => { if (!P.isManager(u)) throw new HttpError(403, 'Apen
 const needFinance = (u) => { if (!P.canFinance(u)) throw new HttpError(403, 'Sem acesso ao financeiro.'); };
 const needAdmin = (u) => { if (!u || u.role !== 'admin') throw new HttpError(403, 'Apenas administradores.'); };
 const cleanList = (arr, keys) => (Array.isArray(arr) ? arr : J(arr, []) || []).filter((r) => r && keys.some((k) => String(r[k] ?? '').trim())).map((r) => Object.fromEntries(keys.map((k) => [k, r[k] === undefined || r[k] === null ? '' : String(r[k]).trim().slice(0, 2000)])));
-const svcLabel = (v) => docs.label('SERVICE_TYPES', v);
+const svcLabel = (v) => docs.label('SERVICE_TYPES_ALL', v);
 const problemsResponse = (res, list) => res.status(400).json({ error: list.length === 1 ? list[0] : `Há ${list.length} pendências antes de gerar o documento.`, problems: list });
 
 // ====================================================================
@@ -110,7 +110,7 @@ function nextProposalNumber() {
 }
 function loadProposal(u, id) {
   needManager(u);
-  const p = get(`SELECT pr.*, c.name client_name, c.doc client_doc, c.whatsapp client_whatsapp, c.phone client_phone, c.email client_email, c.address client_address, c.city client_city,
+  const p = get(`SELECT pr.*, COALESCE(c.name, pr.prospect_name) client_name, c.name registered_client_name, c.doc client_doc, c.whatsapp client_whatsapp, c.phone client_phone, c.email client_email, c.address client_address, c.city client_city,
     p.name project_name, u.name responsible_name FROM proposals pr LEFT JOIN clients c ON c.id = pr.client_id LEFT JOIN projects p ON p.id = pr.project_id LEFT JOIN users u ON u.id = pr.responsible_id WHERE pr.id = ?`, id);
   if (!p) throw new HttpError(404, 'Proposta não encontrada.');
   return p;
@@ -121,11 +121,12 @@ function proposalOut(p) {
   const plan = docs.normalizePlan(p.payment_plan);
   return {
     ...p, extra: J(p.extra, {}) || {}, stages: J(p.stages, []) || [], payment_plan: plan, plan_check: docs.planCheck(p.amount, plan),
+    services: docs.proposalServices(p), is_prospect: !p.client_id,
     template: tpl, template_outdated: !!(tpl && p.template_version && tpl.version > p.template_version), contracts,
     receivables: val("SELECT COUNT(*) FROM incomes WHERE group_key = ? AND status <> 'cancelado'", `prop-${p.id}`) || 0,
   };
 }
-const PROPOSAL_FIELDS = ['number', 'client_id', 'title', 'project_id', 'service_type', 'work_type', 'issue_date', 'valid_until', 'contact_name', 'address', 'city', 'area', 'summary', 'scope', 'excluded',
+const PROPOSAL_FIELDS = ['services', 'prospect_name', 'prospect_doc', 'prospect_phone', 'prospect_email', 'prospect_address', 'prospect_city', 'number', 'client_id', 'title', 'project_id', 'service_type', 'work_type', 'issue_date', 'valid_until', 'contact_name', 'address', 'city', 'area', 'summary', 'scope', 'excluded',
   'deliverables', 'stages', 'deadline_text', 'amount', 'down_payment', 'payment_plan', 'payment_method', 'pix_key', 'pix_name', 'conditions', 'extra', 'body', 'notes', 'responsible_id'];
 function readProposal(b, existing) {
   const d = {};
@@ -139,37 +140,104 @@ function readProposal(b, existing) {
     else if (k === 'payment_plan') d[k] = JSON.stringify(docs.normalizePlan(v));
     else if (k === 'extra') { const e = typeof v === 'object' && v ? v : J(v, {}); d[k] = JSON.stringify(Object.fromEntries(Object.entries(e || {}).map(([kk, vv]) => [kk, vv === null ? '' : String(vv).slice(0, 2000)]))); }
     else if (k === 'body') d[k] = v === null ? null : String(v).replace(/\r\n/g, '\n').slice(0, 100000);
+    else if (k === 'services') {
+      const list = (Array.isArray(v) ? v : J(v, []) || []).filter((x) => x && C.SERVICE_TYPES.some((t) => t.value === x.type));
+      const seen = new Set(); const clean = [];
+      for (const x of list) { if (seen.has(x.type)) continue; seen.add(x.type); clean.push({ type: x.type, description: str(x.description, 1000) || '', amount: numOrNull(x.amount) }); }
+      d.services = JSON.stringify(clean);
+      d.service_type = clean.length ? docs.primaryService(clean) : null;
+      // com valores por serviço, o total é a soma (sem contar duas vezes)
+      if (clean.some((x) => x.amount != null)) d.amount = round2(clean.reduce((sum, x) => sum + (x.amount || 0), 0));
+    }
     else d[k] = str(v);
   }
-  if (d.service_type && !C.SERVICE_TYPES.some((s) => s.value === d.service_type)) throw new HttpError(400, 'Tipo de serviço inválido.');
+  if (d.service_type && !C.SERVICE_TYPES_ALL.some((s) => s.value === d.service_type)) throw new HttpError(400, 'Tipo de serviço inválido.');
   const merged = { ...(existing || {}), ...d };
-  if (!merged.client_id) throw new HttpError(400, 'Selecione o cliente.');
+  if (!merged.client_id && !merged.prospect_name) throw new HttpError(400, 'Informe o nome do interessado ou selecione um cliente cadastrado.');
+  if (merged.client_id && 'client_id' in d) { d.prospect_name = d.prospect_name ?? null; }
   if (!merged.title) throw new HttpError(400, 'Informe o projeto ou serviço da proposta.');
   if (d.number) { const dup = get('SELECT id FROM proposals WHERE number = ? AND id <> ?', d.number, existing ? existing.id : 0); if (dup) throw new HttpError(400, `Já existe uma proposta com o número ${d.number}.`); }
   if (d.payment_plan) { const plan = J(d.payment_plan, []); d.installments = plan.length || 1; }
   if ('amount' in d && d.amount === null) d.amount = 0;
+  if ('amount' in d && !('services' in d) && existing) { const sv = docs.proposalServices(existing); if (sv.some((x) => x.amount != null)) d.amount = round2(sv.reduce((sum, x) => sum + (x.amount || 0), 0)); }
   return d;
+}
+// Valores iniciais das entregas, etapas e itens não incluídos para os serviços escolhidos (sem repetir itens)
+function mergedDefaults(services) {
+  const types = services.map((x) => x.type);
+  const uniq = (arr, key) => { const seen = new Set(); return arr.filter((x) => { const k = String(key ? x[key] : x).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }); };
+  const def = (t) => docs.PROPOSAL_DEFAULTS[t] || {};
+  let excluded = uniq(types.flatMap((t) => def(t).excluded || []));
+  if (types.includes('acompanhamento')) excluded = excluded.filter((x) => !/^acompanhamento de obra/i.test(x));
+  return { deliverables: uniq(types.flatMap((t) => def(t).deliverables || [])), stages: uniq(types.flatMap((t) => def(t).stages || []), 'etapa'), excluded };
 }
 router.post('/honorarios', wrap((req, res) => {
   needManager(req.user);
-  const b = req.body || {};
-  const st = b.service_type || 'interiores';
+  const b = { ...(req.body || {}) };
+  let services = Array.isArray(b.services) ? b.services.filter((x) => x && x.type) : [];
+  if (!services.length) services = [{ type: C.SERVICE_TYPES.some((x) => x.value === b.service_type) ? b.service_type : 'interiores' }];
+  delete b.service_type;
+  const st = docs.primaryService(services);
   const tpl = docs.templateFor('proposta', st);
   const o = docs.office();
-  const def = docs.PROPOSAL_DEFAULTS[st] || {};
+  const def = mergedDefaults(services);
   const base = {
-    service_type: st, issue_date: today(), valid_until: addDays(today(), o.validity_days), payment_method: 'pix', pix_key: o.pix_key, pix_name: o.pix_name,
-    deliverables: (def.deliverables || []).join('\n'), excluded: (def.excluded || []).join('\n'), stages: def.stages || [], body: tpl ? tpl.body : '', ...b,
+    issue_date: today(), valid_until: addDays(today(), o.validity_days), payment_method: 'pix', pix_key: o.pix_key, pix_name: o.pix_name,
+    deliverables: def.deliverables.join('\n'), excluded: def.excluded.join('\n'), stages: def.stages, body: tpl ? tpl.body : '', ...b, services,
   };
   const d = readProposal(base, null);
   d.kind = 'honorarios'; d.status = 'elaboracao'; d.number = d.number || nextProposalNumber(); d.responsible_id = d.responsible_id || req.user.id;
   if (tpl) { d.template_id = tpl.id; d.template_version = tpl.version; }
   if (!d.address && d.client_id) { const c = get('SELECT address, city FROM clients WHERE id = ?', d.client_id); if (c) { d.address = c.address; d.city = c.city; } }
+  if (!d.address && d.prospect_address) { d.address = d.prospect_address; d.city = d.city || d.prospect_city; }
   d.created_at = nowIso(); d.updated_at = nowIso();
   const id = insert('proposals', d);
-  audit(req, 'create', 'proposals', id, `Proposta de honorários criada: ${d.number} — ${d.title}`);
+  audit(req, 'create', 'proposals', id, `Proposta de honorários criada: ${d.number} — ${d.title}${d.client_id ? '' : ' (interessado sem cadastro)'}`);
   res.status(201).json(proposalOut(loadProposal(req.user, id)));
 }));
+router.get('/proposal-defaults', wrap((req, res) => { needManager(req.user); res.json(mergedDefaults(String(req.query.types || '').split(',').filter(Boolean).map((type) => ({ type })))); }));
+
+// ------------------------------ Interessado → cliente ------------------------------
+const digits = (v) => String(v || '').replace(/\D/g, '');
+function clientMatches(p) {
+  const rows = all('SELECT id, name, doc, phone, whatsapp, email, city, archived FROM clients');
+  const nm = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const pn = nm(p.prospect_name); const pd = digits(p.prospect_doc); const pp = digits(p.prospect_phone).slice(-9); const pe = String(p.prospect_email || '').trim().toLowerCase();
+  return rows.map((c) => {
+    const why = [];
+    if (pd && digits(c.doc) === pd) why.push('mesmo CPF/CNPJ');
+    if (pe && String(c.email || '').trim().toLowerCase() === pe) why.push('mesmo e-mail');
+    if (pp && pp.length >= 8 && [c.phone, c.whatsapp].some((x) => digits(x).slice(-9) === pp)) why.push('mesmo telefone');
+    if (pn && nm(c.name) === pn) why.push('mesmo nome');
+    else if (pn && pn.length > 3 && (nm(c.name).includes(pn) || pn.includes(nm(c.name)))) why.push('nome parecido');
+    return why.length ? { ...c, why } : null;
+  }).filter(Boolean);
+}
+router.get('/honorarios/:id/client-matches', wrap((req, res) => {
+  const p = loadProposal(req.user, Number(req.params.id));
+  res.json({ prospect: { name: p.prospect_name, doc: p.prospect_doc, phone: p.prospect_phone, email: p.prospect_email, address: p.prospect_address, city: p.prospect_city }, matches: p.client_id ? [] : clientMatches(p) });
+}));
+router.post('/honorarios/:id/convert-client', wrap((req, res) => {
+  const p = loadProposal(req.user, Number(req.params.id));
+  if (p.client_id) return res.json({ client_id: p.client_id, already: true });
+  const b = req.body || {};
+  let cid = b.client_id ? Number(b.client_id) : null;
+  if (cid) { if (!get('SELECT 1 FROM clients WHERE id = ?', cid)) throw new HttpError(404, 'Cliente não encontrado.'); }
+  else {
+    if (!p.prospect_name) throw new HttpError(400, 'Informe o nome do interessado na proposta.');
+    const m = clientMatches(p).filter((x) => x.why.some((w) => w !== 'nome parecido'));
+    if (m.length && !b.force) return res.status(409).json({ error: 'Já existe cadastro com dados iguais. Vincule ao cliente existente ou confirme a criação de um novo cadastro.', matches: m });
+    const d = digits(p.prospect_doc);
+    cid = insert('clients', { name: p.prospect_name, person_type: d.length === 14 ? 'PJ' : 'PF', doc: p.prospect_doc || null, whatsapp: p.prospect_phone || null, phone: p.prospect_phone || null,
+      email: p.prospect_email || null, address: p.prospect_address || null, city: p.prospect_city || null, origin: null, created_by: req.user.id, created_at: nowIso() });
+    audit(req, 'create', 'clients', cid, `Cliente criado a partir da proposta ${p.number}: ${p.prospect_name}`);
+  }
+  update('proposals', p.id, { client_id: cid, client_converted_at: nowIso(), updated_at: nowIso() });
+  run('INSERT INTO client_interactions(client_id, project_id, date, type, description, user_id) VALUES (?,?,?,?,?,?)', cid, p.project_id, today(), 'feedback', `Proposta ${p.number} (${p.title}) vinculada ao cadastro do cliente${p.status === 'aprovada' ? ' — aprovada' : ''}`, req.user.id);
+  audit(req, 'update', 'proposals', p.id, `Interessado da proposta ${p.number} convertido em cliente`);
+  res.json({ client_id: cid });
+}));
+const needClient = (p) => { if (!p.client_id) { const e = new HttpError(409, 'Esta proposta é de um interessado ainda sem cadastro. Converta o interessado em cliente para continuar.'); e.needClient = true; throw e; } };
 router.get('/honorarios/:id', wrap((req, res) => res.json(proposalOut(loadProposal(req.user, Number(req.params.id))))));
 router.put('/honorarios/:id', wrap((req, res) => {
   const p = loadProposal(req.user, Number(req.params.id));
@@ -206,7 +274,7 @@ router.post('/honorarios/:id/upgrade', wrap((req, res) => {
   const st = /interior/i.test(p.project_type || '') ? 'interiores' : 'arquitetonico';
   const tpl = docs.templateFor('proposta', st); const o = docs.office(); const def = docs.PROPOSAL_DEFAULTS[st] || {};
   update('proposals', p.id, {
-    kind: 'honorarios', service_type: st, issue_date: p.issue_date || (p.created_at || today()).slice(0, 10), body: tpl ? tpl.body : '', template_id: tpl && tpl.id, template_version: tpl && tpl.version,
+    kind: 'honorarios', service_type: st, services: JSON.stringify([{ type: st, description: '', amount: null }]), issue_date: p.issue_date || (p.created_at || today()).slice(0, 10), body: tpl ? tpl.body : '', template_id: tpl && tpl.id, template_version: tpl && tpl.version,
     payment_method: p.payment_method || 'pix', pix_key: p.pix_key || o.pix_key, pix_name: p.pix_name || o.pix_name, deliverables: (def.deliverables || []).join('\n'), excluded: (def.excluded || []).join('\n'),
     stages: JSON.stringify(def.stages || []), payment_plan: JSON.stringify(docs.buildPlan({ total: p.amount, count: p.installments || 1, first_due: addDays(today(), 7) })), updated_at: nowIso(),
   });
@@ -230,7 +298,7 @@ router.post('/honorarios/:id/status', wrap((req, res) => {
   if (st !== 'aprovada' && p.status === 'aprovada') { d.approved_by = null; d.approved_at = null; d.approval_notes = null; d.approved_user_id = null; }
   update('proposals', p.id, d);
   const lbl = { enviada: 'Proposta enviada', aprovada: `Proposta aprovada por ${d.approved_by}`, recusada: 'Proposta recusada', expirada: 'Proposta expirada' }[st];
-  if (lbl) run('INSERT INTO client_interactions(client_id, project_id, date, type, description, user_id) VALUES (?,?,?,?,?,?)', p.client_id, p.project_id, d.approved_at || today(), 'feedback', `${lbl} — ${p.number} ${p.title}`, req.user.id);
+  if (lbl && p.client_id) run('INSERT INTO client_interactions(client_id, project_id, date, type, description, user_id) VALUES (?,?,?,?,?,?)', p.client_id, p.project_id, d.approved_at || today(), 'feedback', `${lbl} — ${p.number} ${p.title}`, req.user.id);
   audit(req, 'update', 'proposals', p.id, `Proposta ${p.number}: status ${docs.label('PROPOSAL_STATUS', st)}${st === 'aprovada' ? ` (aprovação registrada: ${d.approved_by}, ${docs.brDate(d.approved_at)})` : ''}`);
   res.json(proposalOut(loadProposal(req.user, p.id)));
 }));
@@ -239,7 +307,9 @@ router.post('/honorarios/:id/status', wrap((req, res) => {
 router.post('/honorarios/:id/project', wrap((req, res) => {
   const p = loadProposal(req.user, Number(req.params.id));
   if (p.project_id) throw new HttpError(400, 'Esta proposta já está vinculada a um projeto.');
+  needClient(p);
   const type = { interiores: 'Interiores', arquitetonico: 'Arquitetura', arq_interiores: 'Arquitetura', acompanhamento: 'Acompanhamento de obra', visita: 'Consultoria' }[p.service_type] || null;
+  // (com vários serviços, o tipo do projeto segue o serviço principal da proposta)
   const id = tx(() => {
     const pid = insert('projects', { code: proj.nextCode('projects', 'P'), name: p.title, client_id: p.client_id, address: p.address, city: p.city, type, area: p.area, contract_value: p.amount,
       contracted_at: p.approved_at || today(), start_date: today(), manager_id: p.responsible_id || req.user.id, status: 'ativo', proposal_id: p.id, created_by: req.user.id, created_at: nowIso() });
@@ -267,7 +337,7 @@ function contractDataDefaults({ client, office, proposal, project }) {
     projeto_nome: proposal ? proposal.title : project ? project.name : '',
     objeto: proposal ? proposal.summary || '' : '', localizacao: proposal ? [proposal.address, proposal.city].filter(Boolean).join(' – ') : project ? [project.address, project.city].filter(Boolean).join(' – ') : '',
     area: proposal && proposal.area ? String(proposal.area) : project && project.area ? String(project.area) : '',
-    escopo: proposal ? proposal.scope || '' : '', nao_incluidos: proposal ? proposal.excluded || '' : '', entregas: proposal ? proposal.deliverables || '' : '',
+    escopo: proposal ? proposal.scope || proposal.deliverables || '' : '', nao_incluidos: proposal ? proposal.excluded || '' : '', entregas: proposal ? proposal.deliverables || '' : '',
     etapas: proposal ? proposal.stages || '[]' : '[]', condicoes: proposal ? proposal.conditions || '' : '',
     prazo_data: '', prazo_texto: proposal ? proposal.deadline_text || '' : '',
     periodicidade: ex.periodicidade || '', visitas: ex.visitas || '', periodo_inicio: ex.periodo_inicio || '', periodo_fim: ex.periodo_fim || '', cobranca: ex.cobranca || '', valor_visita: ex.valor_visita || '',
@@ -301,15 +371,19 @@ function createContract({ serviceType, clientId, projectId, proposal, user }) {
 router.post('/contracts/from-template', wrap((req, res) => {
   needManager(req.user);
   const b = req.body || {};
-  if (!C.SERVICE_TYPES.some((s) => s.value === b.service_type)) throw new HttpError(400, 'Selecione o modelo de contrato.');
+  if (!C.SERVICE_TYPES_ALL.some((s) => s.value === b.service_type)) throw new HttpError(400, 'Selecione o modelo de contrato.');
   const id = createContract({ serviceType: b.service_type, clientId: Number(b.client_id), projectId: b.project_id ? Number(b.project_id) : null, user: req.user });
   res.status(201).json({ id });
 }));
 router.post('/honorarios/:id/contract', wrap((req, res) => {
   const p = loadProposal(req.user, Number(req.params.id));
+  needClient(p);
   const existing = get("SELECT id, number FROM contracts WHERE proposal_id = ? AND status <> 'cancelado' ORDER BY id DESC", p.id);
   if (existing && !req.body.force) return res.status(409).json({ error: `Já existe o contrato ${existing.number} gerado a partir desta proposta.`, contract_id: existing.id });
-  const id = createContract({ serviceType: p.service_type || 'interiores', clientId: p.client_id, projectId: p.project_id, proposal: p, user: req.user });
+  // com projeto arquitetônico e de interiores na mesma proposta, usa o modelo de contrato conjunto
+  const types = docs.proposalServices(p).map((x) => x.type);
+  const ctType = types.includes('arquitetonico') && types.includes('interiores') ? 'arq_interiores' : p.service_type || 'interiores';
+  const id = createContract({ serviceType: ctType, clientId: p.client_id, projectId: p.project_id, proposal: p, user: req.user });
   res.status(201).json({ id });
 }));
 
@@ -348,7 +422,7 @@ router.put('/contract-docs/:id', wrap((req, res) => {
   if ('payment_method' in b) d.payment_method = str(b.payment_method, 40);
   if ('notes' in b) d.notes = str(b.notes);
   if ('project_id' in b) d.project_id = b.project_id ? Number(b.project_id) : null;
-  if ('service_type' in b && C.SERVICE_TYPES.some((s) => s.value === b.service_type)) d.service_type = b.service_type;
+  if ('service_type' in b && C.SERVICE_TYPES_ALL.some((s) => s.value === b.service_type)) d.service_type = b.service_type;
   if ('payment_plan' in b) { const plan = docs.normalizePlan(b.payment_plan); d.payment_plan = JSON.stringify(plan); d.installments = plan.length || 1; d.first_due_date = plan[0] ? plan[0].due_date : null; }
   if (d.service_type && d.service_type !== c.service_type && b.apply_template) {
     const tpl = docs.templateFor('contrato', d.service_type); if (tpl) { d.body = tpl.body; d.template_id = tpl.id; d.template_version = tpl.version; }
@@ -360,7 +434,7 @@ router.put('/contract-docs/:id', wrap((req, res) => {
 }));
 router.post('/contract-docs/:id/reload-template', wrap((req, res) => {
   const c = loadContract(req.user, Number(req.params.id));
-  const st = C.SERVICE_TYPES.some((s) => s.value === req.body.service_type) ? req.body.service_type : c.service_type || 'interiores';
+  const st = C.SERVICE_TYPES_ALL.some((s) => s.value === req.body.service_type) ? req.body.service_type : c.service_type || 'interiores';
   const tpl = docs.templateFor('contrato', st); if (!tpl) throw new HttpError(404, 'Modelo não encontrado.');
   const d = { body: tpl.body, template_id: tpl.id, template_version: tpl.version, service_type: st, updated_at: nowIso() };
   // contratos antigos (sem ficha): preenche os dados das partes a partir dos cadastros
@@ -429,6 +503,7 @@ function planReceivables(source, id, user, confirm) {
   } else {
     rec = loadProposal(user, id); plan = docs.normalizePlan(rec.payment_plan); projectId = rec.project_id; clientId = rec.client_id; groupKey = `prop-${rec.id}`; title = rec.title; proposalId = rec.id;
     if (rec.status !== 'aprovada') throw new HttpError(400, 'Registre a aprovação da proposta antes de cadastrar as parcelas.');
+    needClient(rec);
   }
   const chk = docs.planCheck(rec.amount, plan);
   if (!plan.length) throw new HttpError(400, 'Cadastre as parcelas e os vencimentos antes.');
@@ -591,7 +666,8 @@ function proposalProblems(p) {
   if (!p.issue_date) base.push('Informe a data da proposta.');
   if (!p.valid_until) base.push('Informe a validade da proposta.');
   else if (p.issue_date && p.valid_until < p.issue_date) base.push('A validade não pode ser anterior à data da proposta.');
-  if (!p.service_type) base.push('Selecione o tipo de serviço.');
+  if (!docs.proposalServices(p).length) base.push('Adicione ao menos um serviço à proposta.');
+  if (!p.client_id && !p.prospect_name) base.push('Informe o interessado ou selecione um cliente cadastrado.');
   if (!(p.amount > 0)) base.push('Informe o valor total.');
   const plan = docs.normalizePlan(p.payment_plan); const chk = docs.planCheck(p.amount, plan);
   if (!plan.length) base.push('Cadastre as parcelas e os vencimentos.');
@@ -607,12 +683,12 @@ router.get('/pdf/proposal/:id', wrap(async (req, res) => {
   if (req.query.check === '1') return res.json({ ok: !list.length, problems: list });
   if (list.length && !draft) return problemsResponse(res, list);
   if (draft) draftVars(ctx);
-  const svc = svcLabel(p.service_type);
+  const svc = docs.servicesLabel(docs.proposalServices(p));
   const doc = pdf.build({
     title: 'Proposta de honorários', draft,
     purpose: `Proposta de prestação de serviços${svc ? ' de ' + svc.toLowerCase() : ''} elaborada para ${ctx.vars['cliente.nome'] || 'o cliente'}. Reúne escopo, etapas, prazos, investimento e condições para análise e aprovação.`,
     ident: [['Proposta nº', p.number], ['Data', docs.brDate(p.issue_date)], ['Validade', docs.brDate(p.valid_until)], ['Cliente', ctx.vars['cliente.nome'], 2], ['A/C', p.contact_name],
-      ['Projeto / serviço', p.title, 2], ['Tipo de serviço', svc], ['Endereço', ctx.vars['projeto.endereco'], 2], ['Tipo de obra', ctx.vars['obra.tipo']], ['Área aproximada', ctx.vars.area]],
+      ['Projeto / serviço', p.title, 3], ['Serviços', svc, 3], ['Endereço', ctx.vars['projeto.endereco'], 2], ['Tipo de obra', ctx.vars['obra.tipo']], ['Área aproximada', ctx.vars.area]],
     content: pdf.tokensToContent(docs.resolve(p.body, ctx)),
     info: { title: `Proposta ${p.number} — ${p.title}` },
   });

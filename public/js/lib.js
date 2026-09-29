@@ -149,6 +149,8 @@ const I = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
   hourglass: '<path d="M5 22h14M5 2h14M17 22v-4.2a2 2 0 0 0-.6-1.4L12 12l-4.4 4.4a2 2 0 0 0-.6 1.4V22M7 2v4.2a2 2 0 0 0 .6 1.4L12 12l4.4-4.4a2 2 0 0 0 .6-1.4V2"/>',
+  receipt: '<path d="M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/>',
+  sign: '<rect x="3" y="3" width="18" height="12" rx="1.5"/><path d="M8 15v6M16 15v6M7 8h6M7 11h10"/>',
   diary: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/><path d="M9 7h7M9 11h5"/>',
 };
 export const icon = (name, cls = '') => raw(`<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[name] || I.more}</svg>`);
@@ -281,7 +283,7 @@ export function fieldInput(f, v, ctx = {}) {
   const name = f.name;
   const vv = v ?? '';
   switch (f.type) {
-    case 'textarea': return el(html`<textarea name="${name}" ${req} rows="3">${vv}</textarea>`);
+    case 'textarea': return el(html`<textarea name="${name}" ${req} rows="3" ${f.raw ? raw('data-raw') : ''}>${vv}</textarea>`);
     case 'money': return el(html`<div class="money-input"><span>R$</span><input type="number" step="0.01" name="${name}" value="${vv}" ${req} inputmode="decimal"></div>`);
     case 'number': return el(html`<input type="number" step="any" name="${name}" value="${vv}" ${req} inputmode="decimal">`);
     case 'percent': return el(html`<div class="row"><input type="range" min="0" max="100" step="5" name="${name}" value="${vv || 0}"><span class="small muted" style="width:40px">${vv || 0}%</span></div>`);
@@ -315,7 +317,7 @@ export function fieldInput(f, v, ctx = {}) {
       });
       return w;
     }
-    default: return el(html`<input type="text" name="${name}" value="${vv}" ${req} ${f.readonly ? 'readonly' : ''}>`);
+    default: return el(html`<input type="text" name="${name}" value="${vv}" ${req} ${f.readonly ? raw('readonly') : ''} ${f.sentence ? raw('data-sentence') : ''}>`);
   }
 }
 
@@ -364,7 +366,7 @@ export function readForm(form) {
   $$('input[name], select[name], textarea[name]', form).forEach((i) => {
     if (i.closest('[data-multi]')) return;
     if (i.type === 'checkbox') out[i.name] = i.checked ? 1 : 0;
-    else out[i.name] = i.value;
+    else { applySentence(i); out[i.name] = i.value; }
   });
   $$('[data-multi]', form).forEach((w) => { out[w.dataset.multi] = $$('input:checked', w).map((i) => Number(i.value)); });
   return out;
@@ -420,7 +422,8 @@ export async function archiveRow(resKey, row, archived = 1) {
   invalidateRefs(resKey); toast(archived ? 'Arquivado.' : 'Restaurado.');
 }
 export async function deleteRow(resKey, row, name) {
-  if (!(await confirmDialog(`Excluir definitivamente ${name ? `"${name}"` : 'este registro'}? Esta ação não pode ser desfeita.`, { title: 'Excluir', ok: 'Excluir', danger: true }))) return false;
+  const arch = S.meta && S.meta.resources[resKey] && S.meta.resources[resKey].archivable;
+  if (!(await confirmDialog(`Excluir definitivamente ${name ? `"${name}"` : 'este registro'}? Esta ação não pode ser desfeita.${arch ? ' Para apenas retirar das listas e manter o histórico, use “Arquivar”.' : ''}`, { title: 'Excluir definitivamente', ok: 'Excluir definitivamente', danger: true }))) return false;
   await api.del(`/r/${resKey}/${row.id}`); invalidateRefs(resKey); toast('Excluído.'); return true;
 }
 export async function duplicateRow(resKey, row) {
@@ -474,23 +477,27 @@ export function dropzone(meta, onDone, { label = 'Arraste arquivos aqui ou cliqu
   z.ondrop = (e) => { e.preventDefault(); z.classList.remove('over'); send(e.dataTransfer.files); };
   return z;
 }
-export function fileRow(d, { onDelete } = {}) {
+export function fileRow(d, { onDelete, onArchive } = {}) {
   const isImg = (d.mime || '').startsWith('image/');
   const r = el(html`<div class="file"><div class="file-ico">${isImg ? icon('image', 'sm') : fileExt(d.file_name)}</div>
     <div class="grow"><a class="li-title" href="${fileUrl(d, true)}" target="_blank" rel="noopener">${d.title}</a>
     <div class="li-sub">${[d.category, d.size ? bytes(d.size) : null, d.created_at ? date(d.created_at) : null, d.uploaded_by_name].filter(Boolean).join(' · ')}${d.client_visible ? ' · visível ao cliente' : ''}${d.expires_at ? ` · validade ${date(d.expires_at)}` : ''}</div></div>
-    <a class="icon-btn" href="${fileUrl(d)}" title="Baixar">${icon('download', 'sm')}</a>${onDelete ? html`<button class="icon-btn" data-del title="Excluir">${icon('trash', 'sm')}</button>` : ''}</div>`);
+    <a class="icon-btn" href="${fileUrl(d)}" title="Baixar">${icon('download', 'sm')}</a>${onArchive ? html`<button class="icon-btn" data-arc title="${d.archived ? 'Restaurar' : 'Arquivar (retira da lista, mantém o histórico)'}">${icon(d.archived ? 'refresh' : 'archive', 'sm')}</button>` : ''}${onDelete ? html`<button class="icon-btn" data-del title="Excluir definitivamente">${icon('trash', 'sm')}</button>` : ''}</div>`);
   if (onDelete) r.querySelector('[data-del]').onclick = () => onDelete(d);
+  if (onArchive) r.querySelector('[data-arc]').onclick = () => onArchive(d);
   return r;
 }
 export function attachments(entity, id, { extraMeta = {}, title = 'Anexos' } = {}) {
   const box = el(html`<div><div class="eyebrow mb-8">${title}</div><div class="files"></div><div class="mt-8"></div></div>`);
   const listEl = box.querySelector('.files');
+  let showArch = false;
   const load = async () => {
-    const rows = await api.get(`/attachments/${entity}/${id}`);
+    const all_ = await api.get(`/attachments/${entity}/${id}`);
+    const rows = all_.filter((d) => showArch || !d.archived); const nArch = all_.filter((d) => d.archived).length;
     listEl.innerHTML = '';
     if (!rows.length) listEl.appendChild(el('<div class="muted small">Nenhum arquivo anexado.</div>'));
-    rows.forEach((d) => listEl.appendChild(fileRow(d, { onDelete: async (doc) => { if (await deleteRow('documents', doc, doc.title)) load(); } })));
+    rows.forEach((d) => listEl.appendChild(fileRow(d, { onArchive: async (doc) => { await archiveRow('documents', doc, doc.archived ? 0 : 1); load(); } })));
+    if (nArch) { const b = el(html`<button type="button" class="btn xs ghost mt-8">${showArch ? 'Ocultar arquivados' : `Mostrar ${nArch} arquivado(s)`}</button>`); b.onclick = () => { showArch = !showArch; load(); }; listEl.appendChild(b); }
   };
   box.lastElementChild.appendChild(dropzone({ entity, entity_id: id, ...extraMeta }, load, { label: 'Anexar arquivo', compact: true }));
   load().catch(fail);
@@ -577,7 +584,7 @@ export function rowsEditor({ columns, rows = [], onChange, addLabel = 'Adicionar
       case 'money': return `<div class="money-input"><span>R$</span><input class="input" type="text" inputmode="decimal" ${attrs} value="${val === '' ? '' : esc(brl2(val))}"></div>`;
       case 'number': return `<input class="input" type="text" inputmode="decimal" ${attrs} value="${esc(String(val).replace('.', ','))}">`;
       case 'textarea': return `<textarea class="input" rows="2" ${attrs} placeholder="${esc(c.placeholder || '')}">${esc(val)}</textarea>`;
-      default: return `<input class="input" type="text" ${attrs} value="${esc(val)}" placeholder="${esc(c.placeholder || '')}">`;
+      default: return `<input class="input" type="text" ${attrs} value="${esc(val)}" placeholder="${esc(c.placeholder || '')}" ${c.sentence ? 'data-sentence' : ''}>`;
     }
   };
   const render = () => {
@@ -617,3 +624,52 @@ export function dirtyTracker(root) {
   st.mark = mark;
   return st;
 }
+
+// ------------------------------ Padrão de escrita (1ª letra maiúscula, demais minúsculas) ------------------------------
+// Aplicado a campos de texto livre de conteúdo (textareas e campos marcados com data-sentence) quando o usuário
+// digita ou cola. Não altera senhas, e-mails, links, chaves Pix, códigos nem registros antigos que não foram editados.
+const SENT_SEL = 'textarea:not([data-raw]):not(.body-ta), input[data-sentence]';
+const PROTECT = /^(?:https?:\/\/|www\.)|@|\{\{|\}\}|\d|\//i;
+// siglas mantidas em maiúsculas (quando o texto não está todo em caixa alta)
+const ACRONYMS = new Set(['PDF', 'CAU', 'RRT', 'ART', 'CPF', 'CNPJ', 'CEP', 'PIX', 'MS', 'MT', 'SP', 'RJ', 'BR', 'UF', 'CREA', 'IPTU', 'LED', 'MDF', 'MDP', 'PVC', 'ABNT', 'NBR', 'WC', 'TV', 'AC', 'CAU-MS', 'CAU/MS', 'ISS', 'INSS', 'NF', 'NFS-E', 'DWG', 'RT', 'CEO', 'OK', 'EUA']);
+// Nomes próprios escritos com inicial maiúscula no meio do texto são mantidos (ex.: "Casa Silva").
+// Só se normaliza o que está em CAIXA ALTA, com maiúsculas soltas no meio da palavra, ou quando
+// quase todas as palavras do texto começam com maiúscula ("Texto Digitado Assim").
+const LOWER_WORDS = new Set(['a', 'o', 'e', 'de', 'da', 'do', 'das', 'dos', 'em', 'no', 'na', 'nos', 'nas', 'com', 'para', 'por', 'um', 'uma', 'ao', 'aos', 'à', 'às', 'ou', 'que', 'se']);
+export function sentenceCase(text, { atStart = true } = {}) {
+  if (!text) return text;
+  let start = atStart;
+  const words = text.split(/\s+/).map((w) => w.replace(/[^\p{L}]/gu, '')).filter((w) => w.length >= 3 && !LOWER_WORDS.has(w.toLocaleLowerCase('pt-BR')));
+  const caps = words.filter((w) => /^\p{Lu}/u.test(w)).length;
+  const titleText = words.length >= 3 && caps === words.length; // todas as palavras com inicial maiúscula: normaliza
+  const keepName = (w) => !titleText && /^\p{Lu}[\p{Ll}]+(?:[-'’]\p{Lu}?[\p{Ll}]+)*$/u.test(w);
+  return text.split(/(\r?\n)/).map((part) => {
+    if (/^\r?\n$/.test(part)) { start = true; return part; }
+    return part.split(/(\s+)/).map((w) => {
+      if (!w || /^\s+$/.test(w)) return w;
+      let out = w;
+      const bare = w.replace(/[.,;:!?()]+/g, '');
+      const acronym = ACRONYMS.has(bare.toLocaleUpperCase('pt-BR')) && bare === bare.toLocaleUpperCase('pt-BR');
+      if (!PROTECT.test(w) && !acronym && !keepName(bare)) out = w.toLocaleLowerCase('pt-BR');
+      if (start) { const i = out.search(/\p{L}/u); if (i >= 0) { out = out.slice(0, i) + out.charAt(i).toLocaleUpperCase('pt-BR') + out.slice(i + 1); start = false; } }
+      if (/[.!?]["')\]]*$/.test(out)) start = true;
+      return out;
+    }).join('');
+  }).join('');
+}
+const sentenceValue = (el_) => (el_.matches && el_.matches(SENT_SEL) && el_._sentOrig !== undefined && el_.value !== el_._sentOrig ? sentenceCase(el_.value) : el_.value);
+export function applySentence(el_) { const v = sentenceValue(el_); if (v !== el_.value) { el_.value = v; el_.dispatchEvent(new Event('input', { bubbles: true })); } el_._sentOrig = el_.value; }
+document.addEventListener('focusin', (e) => { const t = e.target; if (t.matches && t.matches(SENT_SEL) && t._sentOrig === undefined) t._sentOrig = t.value; });
+document.addEventListener('focusout', (e) => { const t = e.target; if (t.matches && t.matches(SENT_SEL)) applySentence(t); });
+document.addEventListener('keydown', (e) => { const t = e.target; if (e.key === 'Enter' && t.tagName === 'INPUT' && t.matches(SENT_SEL)) applySentence(t); }, true);
+document.addEventListener('paste', (e) => {
+  const t = e.target; if (!t.matches || !t.matches(SENT_SEL)) return;
+  const txt = e.clipboardData && e.clipboardData.getData('text/plain'); if (txt == null || txt === '') return;
+  e.preventDefault();
+  if (t._sentOrig === undefined) t._sentOrig = t.value;
+  const s = t.selectionStart ?? t.value.length; const en = t.selectionEnd ?? s; const before = t.value.slice(0, s);
+  const atStart = !before.trim() || /[.!?]\s*$/.test(before) || /\n\s*$/.test(before);
+  t.setRangeText(sentenceCase(txt, { atStart }), s, en, 'end');
+  t.dispatchEvent(new Event('input', { bubbles: true }));
+});
+export { sentenceValue };

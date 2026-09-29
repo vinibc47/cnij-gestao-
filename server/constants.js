@@ -49,10 +49,22 @@ module.exports = {
     ['recusada', 'Recusada', 'danger'], ['expirada', 'Expirada', 'muted'],
   ]),
   // Tipos de serviço das propostas de honorários e dos modelos de contrato
+  // Serviços que podem ser adicionados (um ou vários) em cada proposta
   SERVICE_TYPES: S([
+    ['arquitetonico', 'Projeto arquitetônico'], ['interiores', 'Projeto de interiores'],
+    ['acompanhamento', 'Acompanhamento de obra'], ['visita', 'Visita técnica avulsa'],
+  ]),
+  // Inclui a opção conjunta antiga, mantida apenas para exibir documentos já existentes
+  SERVICE_TYPES_ALL: S([
     ['arquitetonico', 'Projeto arquitetônico'], ['interiores', 'Projeto de interiores'],
     ['arq_interiores', 'Projeto arquitetônico e de interiores'], ['acompanhamento', 'Acompanhamento de obra'],
     ['visita', 'Visita técnica avulsa'],
+  ]),
+  RECEIPT_STATUS: S([['rascunho', 'Rascunho', 'neutral'], ['emitido', 'Emitido', 'success'], ['cancelado', 'Cancelado', 'muted']]),
+  REFERENCE_PREP: S([['à', 'à'], ['a', 'a'], ['às', 'às'], ['ao', 'ao'], ['aos', 'aos']]),
+  SIGN_SIZES: S([
+    ['150x100', '1,50 × 1,00 m'], ['120x80', '1,20 × 0,80 m'], ['100x70', '1,00 × 0,70 m'],
+    ['A4', 'A4 — 210 × 297 mm'], ['A3', 'A3 — 297 × 420 mm'], ['A2', 'A2 — 420 × 594 mm'], ['A1', 'A1 — 594 × 841 mm'],
   ]),
   WORK_TYPES: S([
     ['residencial', 'Residencial'], ['comercial', 'Comercial'], ['corporativo', 'Corporativo / escritório'], ['clinica', 'Clínica'],

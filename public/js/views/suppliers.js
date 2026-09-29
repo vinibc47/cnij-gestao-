@@ -1,4 +1,4 @@
-import { S, api, html, el, toHTML, icon, money, date, badge, label, openForm, table, dropzone, fileRow, deleteRow, waLink, isManager, $$ } from '../lib.js';
+import { S, api, html, el, toHTML, icon, money, date, badge, label, openForm, table, dropzone, fileRow, deleteRow, waLink, isManager, $$, archiveRow } from '../lib.js';
 import { listPage, rowActions } from './common.js';
 import { entryDrawer, newEntry } from './finance.js';
 
@@ -72,7 +72,7 @@ const T = {
   documentos(body, d, { reload }) {
     const box = el(html`<div class="grid g3"><div class="card span2 files" data-l></div><div data-z></div></div>`);
     const l = box.querySelector('[data-l]'); if (!d.documents.length) l.innerHTML = '<div class="muted small">Nenhum documento.</div>';
-    d.documents.forEach((doc) => l.appendChild(fileRow(doc, { onDelete: async (x) => { if (await deleteRow('documents', x, x.title)) reload(); } })));
+    d.documents.forEach((doc) => l.appendChild(fileRow(doc, { onArchive: async (x) => { await archiveRow('documents', x, 1); reload(); } })));
     box.querySelector('[data-z]').appendChild(dropzone({ supplier_id: d.supplier.id, category: 'Documentos de fornecedores' }, reload));
     body.appendChild(box);
   },

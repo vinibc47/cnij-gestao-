@@ -66,7 +66,7 @@ function buildInner() {
       title: `Lembrete de cobrança para enviar — ${x.cname || x.description}`, body: `${brl(x.amount)} · ${x.due_date < t ? 'venceu em' : 'vence hoje'} ${br(x.due_date)}`,
       link: '#/financeiro/lembretes', key: `remind_${x.income_id}_${x.due_date}` }));
   }
-  for (const x of all("SELECT pr.*, c.name cname FROM proposals pr LEFT JOIN clients c ON c.id = pr.client_id WHERE pr.status IN ('enviada','visualizada','negociacao') AND pr.valid_until BETWEEN ? AND ?", t, addDays(t, days('alert_days_proposals', 5)))) {
+  for (const x of all("SELECT pr.*, COALESCE(c.name, pr.prospect_name) cname FROM proposals pr LEFT JOIN clients c ON c.id = pr.client_id WHERE pr.status IN ('enviada','visualizada','negociacao') AND pr.valid_until BETWEEN ? AND ?", t, addDays(t, days('alert_days_proposals', 5)))) {
     mgr.forEach((u) => notify(u, { kind: 'proposta_expirando', severity: 'warning', title: `Proposta expira em ${br(x.valid_until)} — ${x.cname}`,
       body: `${x.number} · ${x.title} · ${brl(x.amount)}`, link: `#/propostas/${x.id}`, key: `prop_exp_${x.id}_${x.valid_until}` }));
   }

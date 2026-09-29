@@ -112,7 +112,7 @@ router.get('/dashboard', wrap((req, res) => {
   all(`SELECT t.id, t.title, t.due_date, u.name uname FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id WHERE t.archived = 0 AND t.status <> 'concluida' AND t.due_date <= ? AND ${taskScope.sql} ORDER BY t.due_date LIMIT 6`, t, ...taskScope.params)
     .forEach((x) => push(x.due_date < t ? 'danger' : 'warning', x.due_date < t ? 'Tarefa atrasada' : 'Tarefa para hoje', x.title, `${x.uname || 'Sem responsável'} · ${br(x.due_date)}`, `#/tarefas/${x.id}`));
   if (mgr) {
-    all("SELECT pr.*, c.name cname FROM proposals pr LEFT JOIN clients c ON c.id = pr.client_id WHERE pr.archived = 0 AND pr.status IN ('enviada','visualizada','negociacao') ORDER BY pr.valid_until LIMIT 4")
+    all("SELECT pr.*, COALESCE(c.name, pr.prospect_name) cname FROM proposals pr LEFT JOIN clients c ON c.id = pr.client_id WHERE pr.archived = 0 AND pr.status IN ('enviada','visualizada','negociacao') ORDER BY pr.valid_until LIMIT 4")
       .forEach((x) => push('neutral', 'Proposta aguardando aprovação', `${x.cname} — ${x.title}`, `${brl(x.amount)}${x.valid_until ? ' · válida até ' + br(x.valid_until) : ''}`, `#/propostas/${x.id}`));
     all("SELECT q.item, p.name pname, p.id pid, COUNT(*) n FROM quotes q JOIN projects p ON p.id = q.project_id WHERE q.client_visible = 1 AND q.status IN ('recebido','negociacao') AND NOT EXISTS (SELECT 1 FROM quotes q2 WHERE q2.project_id = q.project_id AND q2.item = q.item AND q2.client_selected = 1) GROUP BY q.project_id, q.item LIMIT 4")
       .forEach((x) => push('neutral', 'Orçamento aguardando aprovação do cliente', `${x.item} — ${x.pname}`, `${x.n} opções liberadas`, `#/projetos/${x.pid}?tab=orcamentos`));

@@ -140,13 +140,31 @@ const FIELDS = {
 };
 const BLOCKS = {
   escopo: 'Escopo e entregas incluídas (lista)', nao_incluidos: 'Serviços não incluídos (lista)', entregas: 'Produtos a serem entregues (lista)',
-  etapas_prazos: 'Tabela de etapas e prazos', parcelas: 'Parcelas e vencimentos (lista)', condicoes: 'Observações e condições adicionais', assinaturas: 'Campos de assinatura',
+  etapas_prazos: 'Tabela de etapas e prazos', servicos: 'Serviços propostos (lista)', parcelas: 'Parcelas e vencimentos (lista)', condicoes: 'Observações e condições adicionais', assinaturas: 'Campos de assinatura',
 };
 // campos que podem ficar vazios: a linha inteira some (ex.: "Att. {{cliente.contato}}")
-const OPTIONAL_LINE = new Set(['cliente.contato', 'pix.favorecido', 'obra.tipo', 'area', 'entrada', 'cliente.documento']);
+const OPTIONAL_LINE = new Set(['cliente.contato', 'pix.favorecido', 'obra.tipo', 'area', 'entrada', 'cliente.documento', 'prazo', 'acompanhamento.valor_visita']);
 const OPTIONAL_INLINE = new Set(['contratante.representacao']);
-const OPTIONAL_BLOCKS = new Set(['condicoes']);
+const OPTIONAL_BLOCKS = new Set(['condicoes', 'nao_incluidos']);
 const PENDING_RX = /\[PENDENTE[^\]]*\]/i;
+
+// ------------------------------ Serviços da proposta (um ou vários) ------------------------------
+const PROJECT_SVC = ['arquitetonico', 'interiores'];
+// lista de serviços; propostas antigas com a opção conjunta viram os dois serviços separados
+function proposalServices(p) {
+  const list = (json(p.services, []) || []).filter((x) => x && x.type);
+  if (list.length) return list.map((x) => ({ type: x.type, description: x.description || '', amount: x.amount === '' || x.amount == null ? null : round2(x.amount) }));
+  if (p.service_type === 'arq_interiores') return [{ type: 'arquitetonico', description: '', amount: null }, { type: 'interiores', description: '', amount: null }];
+  return p.service_type ? [{ type: p.service_type, description: '', amount: null }] : [];
+}
+const servicesLabel = (list) => { const l = list.map((x) => label('SERVICE_TYPES_ALL', x.type)); return l.length <= 1 ? l[0] || '' : `${l.slice(0, -1).join(', ')} e ${l[l.length - 1]}`; };
+function serviceConds(list) {
+  const t = new Set(list.map((x) => x.type));
+  const projeto = PROJECT_SVC.some((x) => t.has(x));
+  return { projeto, arquitetonico: t.has('arquitetonico'), interiores: t.has('interiores'), acompanhamento: t.has('acompanhamento'), visita: t.has('visita'), projeto_sem_acompanhamento: projeto && !t.has('acompanhamento') };
+}
+// serviço que define o modelo de texto: o primeiro projeto escolhido; senão o primeiro serviço
+const primaryService = (list) => (list.find((x) => PROJECT_SVC.includes(x.type)) || list[0] || {}).type || 'interiores';
 
 // ------------------------------ Contexto de uma proposta ------------------------------
 function proposalContext(p) {
@@ -156,8 +174,8 @@ function proposalContext(p) {
   const plan = normalizePlan(p.payment_plan);
   const stages = (json(p.stages, []) || []).filter((r) => r && (r.etapa || r.prazo));
   const vars = {
-    'cliente.nome': client ? client.name : '', 'cliente.contato': p.contact_name || '', 'cliente.documento': client ? client.doc || '' : '',
-    'projeto.nome': p.title || '', 'projeto.endereco': [p.address, p.city].filter(Boolean).join(' – '), 'servico.tipo': label('SERVICE_TYPES', p.service_type),
+    'cliente.nome': client ? client.name : p.prospect_name || '', 'cliente.contato': p.contact_name || '', 'cliente.documento': client ? client.doc || '' : p.prospect_doc || '',
+    'projeto.nome': p.title || '', 'projeto.endereco': [p.address, p.city].filter(Boolean).join(' – '), 'servico.tipo': servicesLabel(proposalServices(p)),
     'obra.tipo': label('WORK_TYPES', p.work_type), area: p.area ? `${String(p.area).replace('.', ',')} m²` : '', resumo: p.summary || '', prazo: p.deadline_text || '',
     valor_total: p.amount ? brl(p.amount) : '', valor_total_extenso: p.amount ? extenso(p.amount) : '', entrada: p.down_payment ? brl(p.down_payment) : '',
     condicao_pagamento: plan.length ? planSentence(plan) : '', forma_pagamento: label('PAYMENT_METHODS', p.payment_method),
@@ -169,11 +187,13 @@ function proposalContext(p) {
     'acompanhamento.cobranca': ex.cobranca || '', 'acompanhamento.valor_visita': ex.valor_visita ? brl(ex.valor_visita) : '',
     'visita.local': ex.visita_local || '', 'visita.finalidade': ex.visita_finalidade || '', 'visita.data': brDate(ex.visita_data), 'visita.duracao': ex.visita_duracao || '',
   };
+  const services = proposalServices(p);
   const blocks = {
     escopo: lines(p.scope), nao_incluidos: lines(p.excluded), entregas: lines(p.deliverables), etapas_prazos: stages,
     parcelas: planLines(plan), condicoes: String(p.conditions || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean),
+    servicos: services.map((x) => ({ label: label('SERVICE_TYPES_ALL', x.type), description: x.description || '', amount: x.amount || null })),
   };
-  return { vars, blocks, client, office: o, plan };
+  return { vars, blocks, client, office: o, plan, services, conds: serviceConds(services) };
 }
 
 // ------------------------------ Contexto de um contrato ------------------------------
@@ -188,7 +208,7 @@ function contractContext(c) {
   const vars = {
     'cliente.nome': client ? client.name : '', 'cliente.documento': d.contratante_doc || '',
     'projeto.nome': d.projeto_nome || (project && project.name) || '', 'projeto.endereco': d.localizacao || '',
-    'servico.tipo': label('SERVICE_TYPES', c.service_type), area: d.area ? `${String(d.area).replace('.', ',')} m²` : '',
+    'servico.tipo': label('SERVICE_TYPES_ALL', c.service_type), area: d.area ? `${String(d.area).replace('.', ',')} m²` : '',
     resumo: d.objeto || '', objeto: d.objeto || '', prazo: d.prazo_texto || '', 'prazo.data': brDate(d.prazo_data),
     valor_total: c.amount ? brl(c.amount) : '', valor_total_extenso: c.amount ? extenso(c.amount) : '',
     entrada: plan[0] && /entrada/i.test(plan[0].label) ? brl(plan[0].amount) : '',
@@ -223,10 +243,23 @@ function contractContext(c) {
 // ------------------------------ Resolução e validação ------------------------------
 const VAR_RX = /\{\{\s*([\w.]+)\s*\}\}/g;
 function usedFields(body) { const s = new Set(); String(body || '').replace(VAR_RX, (m, k) => s.add(k)); return [...s]; }
+// Trechos condicionais: linhas entre [[se projeto]] e [[fim]] só entram se a condição valer
+// (projeto, arquitetonico, interiores, acompanhamento, visita, projeto_sem_acompanhamento)
+const COND_RX = /^\s*\[\[\s*se\s+(nao\s+)?([\w]+)\s*\]\]\s*$/i; const END_RX = /^\s*\[\[\s*fim\s*\]\]\s*$/i;
+function applyConditions(body, conds = {}) {
+  const out = []; const stack = [];
+  for (const line of String(body || '').split(/\r?\n/)) {
+    const m = line.match(COND_RX);
+    if (m) { stack.push(m[1] ? !conds[m[2].toLowerCase()] : !!conds[m[2].toLowerCase()]); continue; }
+    if (END_RX.test(line)) { stack.pop(); continue; }
+    if (stack.every(Boolean)) out.push(line);
+  }
+  return out.join('\n');
+}
 // Converte o texto do modelo em linhas tipadas, com os campos preenchidos
-function resolve(body, { vars, blocks }) {
+function resolve(body, { vars, blocks, conds }) {
   const out = [];
-  for (const rawLine of String(body || '').split(/\r?\n/)) {
+  for (const rawLine of applyConditions(body, conds).split(/\r?\n/)) {
     const line = rawLine.replace(/\s+$/, '');
     const only = line.trim().match(/^\{\{\s*([\w.]+)\s*\}\}$/);
     if (only && only[1] in BLOCKS) { out.push({ t: 'block', name: only[1], data: blocks[only[1]] }); continue; }
@@ -249,14 +282,20 @@ function resolve(body, { vars, blocks }) {
     else if ((m = s.match(/^(\d+)\.\s+(.*)$/))) out.push({ t: 'ol', num: m[1], text: m[2] });
     else out.push({ t: 'p', text: s });
   }
-  return out;
+  // seções sem conteúdo (ex.: lista opcional vazia) não deixam título solto
+  const empty = (tk) => tk.t === 'blank' || (tk.t === 'block' && (!tk.data || (Array.isArray(tk.data) && !tk.data.length)));
+  return out.filter((tk, i) => {
+    if (tk.t !== 'h1') return !(tk.t === 'block' && empty(tk));
+    let j = i + 1; while (j < out.length && empty(out[j])) j++;
+    return j < out.length && out[j].t !== 'h1';
+  });
 }
 // Lista de problemas que impedem a emissão
 function problems(body, ctx, extra = []) {
   const errs = [...extra];
   if (!String(body || '').trim()) errs.push('O texto do documento está vazio.');
   if (PENDING_RX.test(body || '')) errs.push('O texto contém trechos marcados como [PENDENTE]. Complete o modelo em Configurações › Modelos de documentos ou edite o texto deste documento.');
-  for (const k of usedFields(body)) {
+  for (const k of usedFields(applyConditions(body, ctx.conds))) {
     if (k in BLOCKS) {
       const b = ctx.blocks[k];
       if (k === 'assinaturas') { if (!b || !b.signers.every((s) => s.name)) errs.push('Preencha os nomes do contratante e do contratado para os campos de assinatura.'); continue; }
@@ -328,7 +367,7 @@ Forma de pagamento: {{forma_pagamento}}.
 {{condicoes}}
 Orçamento válido apenas para os serviços acordados. Esta proposta é válida até {{proposta.validade}}.`;
 
-const TPL_PROPOSTA = {
+const TPL_PROPOSTA_V1 = {
   interiores: `${PROPOSAL_INTRO}\n${PROJECT_STAGES_TEXT}\n\n# Acompanhamento de obra\n- Para o acompanhamento de obra, o valor é cobrado à parte do projeto, com orçamento separado.\n\n${PROPOSAL_INVEST}`,
   arquitetonico: `${PROPOSAL_INTRO}\n${PROJECT_STAGES_TEXT}\n\n# Acompanhamento de obra\n- Para o acompanhamento de obra, o valor é cobrado à parte do projeto, com orçamento separado.\n\n${PROPOSAL_INVEST}`,
   arq_interiores: `${PROPOSAL_INTRO}\n${PROJECT_STAGES_TEXT}\n\n# Acompanhamento de obra\n- Para o acompanhamento de obra, o valor é cobrado à parte do projeto, com orçamento separado.\n\n${PROPOSAL_INVEST}`,
@@ -368,6 +407,46 @@ Segue a proposta de visita técnica, objeto dos entendimentos mantidos com V. Sa
 
 ${PROPOSAL_INVEST}`,
 };
+
+// Modelo v2: um único texto que se adapta aos serviços escolhidos na proposta
+// (trechos [[se …]] … [[fim]]); a lista "Produtos a serem entregues" é a referência das entregas.
+const PROPOSAL_V2 = (intro) => `Att. {{cliente.contato}}
+${intro}
+
+# Serviços propostos
+{{servicos}}
+{{resumo}}
+
+[[se projeto]]
+${PROJECT_STAGES_TEXT}
+[[fim]]
+
+[[se acompanhamento]]
+# Acompanhamento de obra
+- Periodicidade: {{acompanhamento.periodicidade}}
+- Visitas incluídas: {{acompanhamento.visitas}}
+- Período: {{acompanhamento.periodo}}
+- Forma de cobrança: {{acompanhamento.cobranca}}
+- Valor por visita: {{acompanhamento.valor_visita}}
+- Prazo estimado: {{prazo}}
+[[fim]]
+
+[[se visita]]
+# Visita técnica
+- Local: {{visita.local}}
+- Finalidade: {{visita.finalidade}}
+- Data prevista: {{visita.data}}
+- Duração prevista: {{visita.duracao}}
+[[fim]]
+
+[[se projeto_sem_acompanhamento]]
+# Acompanhamento de obra
+- Para o acompanhamento de obra, o valor é cobrado à parte do projeto, com orçamento separado.
+[[fim]]
+
+${PROPOSAL_INVEST}`;
+const INTRO = 'Segue a proposta de prestação de serviço, objeto dos entendimentos mantidos com V. Sa.';
+const TPL_PROPOSTA = { interiores: PROPOSAL_V2(INTRO), arquitetonico: PROPOSAL_V2(INTRO), arq_interiores: PROPOSAL_V2(INTRO), acompanhamento: PROPOSAL_V2(INTRO), visita: PROPOSAL_V2(INTRO) };
 
 const CONTRACT_PARTIES = `De um lado, daqui por diante denominado **CONTRATANTE**, **{{contratante.nome}}**, inscrito(a) sob {{contratante.tipo_doc}} {{contratante.documento}}, situado(a) à {{contratante.endereco}}{{contratante.representacao}}.
 De outro lado, daqui por diante simplesmente denominado **CONTRATADO**, **{{contratado.nome}}**, inscrito sob {{contratado.tipo_doc}} {{contratado.documento}}, situado à {{contratado.endereco}}.
@@ -495,8 +574,16 @@ const PROPOSAL_DEFAULTS = {
 
 function seedTemplates() {
   tx(() => {
+    // modelos de proposta ainda com o texto original (v1, sem edição do escritório) passam para o modelo por serviços
+    for (const t of all("SELECT * FROM doc_templates WHERE kind = 'proposta'")) {
+      if (TPL_PROPOSTA_V1[t.service_type] && t.body === TPL_PROPOSTA_V1[t.service_type] && t.body !== TPL_PROPOSTA[t.service_type]) {
+        const v = t.version + 1;
+        run('UPDATE doc_templates SET body = ?, version = ?, updated_at = ? WHERE id = ?', TPL_PROPOSTA[t.service_type], v, nowIso(), t.id);
+        insert('doc_template_versions', { template_id: t.id, version: v, body: TPL_PROPOSTA[t.service_type], created_at: nowIso() });
+      }
+    }
     for (const [kind, set] of [['proposta', TPL_PROPOSTA], ['contrato', TPL_CONTRATO]]) {
-      for (const st of C.SERVICE_TYPES) {
+      for (const st of C.SERVICE_TYPES_ALL) {
         if (get('SELECT 1 FROM doc_templates WHERE kind = ? AND service_type = ?', kind, st.value)) continue;
         const name = `${kind === 'proposta' ? 'Proposta' : 'Contrato'} — ${st.label}`;
         const id = insert('doc_templates', { kind, service_type: st.value, name, body: set[st.value], version: 1, source: SOURCES[kind][st.value], updated_at: nowIso() });
@@ -584,5 +671,5 @@ function reminderView(r, t = today()) {
 module.exports = {
   brDate, longDate, brl, extenso, office, docType, pixText, normalizePlan, planCheck, buildPlan, planLines, FIELDS, BLOCKS, PENDING_RX,
   proposalContext, contractContext, resolve, problems, usedFields, seedTemplates, templateFor, templateStatus, saveTemplate,
-  PROPOSAL_DEFAULTS, TPL_PROPOSTA, TPL_CONTRATO, WA_TODAY, WA_OVERDUE, waTemplates, fillReminder, reminderView, json, lines, label,
+  PROPOSAL_DEFAULTS, TPL_PROPOSTA, TPL_CONTRATO, proposalServices, servicesLabel, serviceConds, primaryService, applyConditions, PROJECT_SVC, WA_TODAY, WA_OVERDUE, waTemplates, fillReminder, reminderView, json, lines, label,
 };

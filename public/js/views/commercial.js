@@ -1,4 +1,4 @@
-import { S, api, html, el, toHTML, icon, money, date, badge, label, openForm, drawer, modal, toast, fail, list, attachments, table, pct, today, addDays, deleteRow, duplicateRow, relDay, refOptions, combo, confirmDialog, openPdf, failProblems, datetime, menu, archiveRow, parseNum, round2, dirtyTracker, $$ } from '../lib.js';
+import { S, api, html, el, toHTML, icon, money, date, badge, label, openForm, drawer, modal, toast, fail, list, attachments, table, pct, today, addDays, deleteRow, duplicateRow, relDay, refOptions, combo, confirmDialog, openPdf, failProblems, datetime, menu, archiveRow, parseNum, round2, brl2, dirtyTracker, $$ } from '../lib.js';
 import { listPage, rowActions, tabsBar } from './common.js';
 import { entryDrawer } from './finance.js';
 import { fld, readFields, bindMoney, planEditor, bodyEditor, problemsBox, PROJECT_TYPES, svcLabel } from './docs-common.js';
@@ -39,7 +39,7 @@ async function proposals(ctx, folder, openId) {
     filters: ['status', 'client_id'], beforeTable: true, newLabel: hon ? 'Nova proposta' : 'Nova proposta simples',
     columns: [
       { key: 'number', label: 'Nº', render: (p) => html`<span class="muted">${p.number}</span>` },
-      { key: 'title', label: 'Proposta', render: (p) => html`<div class="cell-title">${p.title}</div><div class="cell-sub">${p.client_name}${p.service_type ? ' · ' + svcLabel(p.service_type) : ''}</div>` },
+      { key: 'title', label: 'Proposta', render: (p) => html`<div class="cell-title">${p.title}</div><div class="cell-sub">${p.client_name || '—'}${p.is_prospect ? ' (interessado)' : ''}${p.services ? ' · ' + (JSON.parse(p.services || '[]').map((x) => svcLabel(x.type)).join(' + ') || svcLabel(p.service_type)) : p.service_type ? ' · ' + svcLabel(p.service_type) : ''}</div>` },
       { key: 'amount', label: 'Valor', align: 'right', render: (p) => money(p.amount) },
       { key: hon ? 'issue_date' : 'sent_at', label: hon ? 'Data' : 'Envio', render: (p) => date(hon ? p.issue_date : p.sent_at) },
       { key: 'valid_until', label: 'Validade', render: (p) => html`<span class="${p.is_expired ? 'late' : ''}">${date(p.valid_until)}</span>` },
@@ -62,24 +62,63 @@ async function proposals(ctx, folder, openId) {
   if (hon && ctx.query.nova) { history.replaceState(null, '', '#/propostas'); newProposal(ctx); }
 }
 
+// Serviços disponíveis (um ou vários por proposta)
+const SVC = () => S.meta.lists.SERVICE_TYPES;
+const isProjectSvc = (t) => PROJECT_TYPES.includes(t);
+
 async function newProposal(ctx, initial = {}) {
   const body = el(html`<div class="form-grid">
-    <div class="field wide"><label>Cliente <span class="req">*</span></label><div data-cli></div><span class="hint">Não encontrou? Digite o nome e escolha “Criar”.</span></div>
-    <div class="field wide"><label>Projeto / serviço <span class="req">*</span></label><input id="np-t" placeholder="Ex.: Projeto de interiores — Escritório corporativo" value="${initial.title || ''}"></div>
-    <div class="field"><label>Tipo de serviço</label><select id="np-s">${S.meta.lists.SERVICE_TYPES.map((o) => html`<option value="${o.value}" ${o.value === (initial.service_type || 'interiores') ? 'selected' : ''}>${o.label}</option>`)}</select></div>
-    <div class="field"><label>Tipo de obra</label><select id="np-w"><option value="">—</option>${S.meta.lists.WORK_TYPES.map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></div>
-    <p class="wide small muted" style="margin:0">A proposta é criada como rascunho com o texto do modelo do tipo de serviço, a chave Pix do escritório e a validade padrão. Tudo pode ser editado em seguida.</p></div>`);
-  const cli = combo({ name: 'client_id', options: refOptions('clients'), value: initial.client_id, allowEmpty: false,
-    onCreate: async (name) => { try { const c = await api.post('/r/clients', { name }); toast('Cliente cadastrado.'); return { id: c.id, label: c.name }; } catch (e) { fail(e); return null; } } });
+    <div class="field wide"><div class="btn-group" data-who><button type="button" class="on" data-w="novo">Novo interessado</button><button type="button" data-w="cliente">Cliente cadastrado</button></div>
+      <span class="hint">A proposta pode ser feita antes do cadastro. O interessado só vira cliente quando você converter, após o aceite.</span></div>
+    <div class="wide form-grid" data-w-box="novo">
+      <div class="field wide"><label>Nome do interessado <span class="req">*</span></label><input id="np-pn" placeholder="Nome da pessoa ou empresa"></div>
+      <div class="field"><label>Telefone / WhatsApp</label><input id="np-pp" type="tel" inputmode="tel"></div><div class="field"><label>E-mail</label><input id="np-pe" type="email"></div></div>
+    <div class="field wide hidden" data-w-box="cliente"><label>Cliente <span class="req">*</span></label><div data-cli></div></div>
+    <div class="field wide"><label>Projeto / serviço <span class="req">*</span></label><input id="np-t" data-sentence placeholder="Ex.: Projeto de interiores — escritório corporativo" value="${initial.title || ''}"></div>
+    <div class="field wide"><label>Serviços da proposta <span class="req">*</span></label><div class="checks" data-svcs>${SVC().map((o) => html`<label><input type="checkbox" value="${o.value}" ${o.value === 'interiores' ? 'checked' : ''}>${o.label}</label>`)}</div><span class="hint">Selecione um ou mais. Você pode adicionar ou remover serviços depois.</span></div>
+    <div class="field"><label>Tipo de obra</label><select id="np-w"><option value="">—</option>${S.meta.lists.WORK_TYPES.map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></div></div>`);
+  const cli = combo({ name: 'client_id', options: refOptions('clients'), value: initial.client_id, allowEmpty: false });
   body.querySelector('[data-cli]').appendChild(cli);
+  let who = initial.client_id ? 'cliente' : 'novo';
+  const setWho = (w) => { who = w; $$('[data-w]', body).forEach((x) => x.classList.toggle('on', x.dataset.w === w)); $$('[data-w-box]', body).forEach((x) => x.classList.toggle('hidden', x.dataset.wBox !== w)); };
+  setWho(who);
+  body.querySelector('[data-who]').onclick = (e) => { const b = e.target.closest('[data-w]'); if (b) setWho(b.dataset.w); };
   const m = modal({ title: 'Nova proposta — Orçamento de obra', body, actions: [{ label: 'Cancelar' }, { label: 'Criar rascunho', primary: true, fn: async () => {
-    const client_id = cli.combo.get(); const title = body.querySelector('#np-t').value.trim();
-    if (!client_id) { toast('Selecione o cliente.', { error: true }); return false; }
+    const title = body.querySelector('#np-t').value.trim();
+    const services = $$('[data-svcs] input:checked', body).map((i) => ({ type: i.value }));
+    const data = { title, services, work_type: body.querySelector('#np-w').value };
+    if (who === 'cliente') { data.client_id = cli.combo.get(); if (!data.client_id) { toast('Selecione o cliente.', { error: true }); return false; } }
+    else { data.prospect_name = body.querySelector('#np-pn').value.trim(); data.prospect_phone = body.querySelector('#np-pp').value.trim(); data.prospect_email = body.querySelector('#np-pe').value.trim(); if (!data.prospect_name) { toast('Informe o nome do interessado.', { error: true }); return false; } }
     if (!title) { toast('Informe o projeto ou serviço.', { error: true }); return false; }
-    const p = await api.post('/honorarios', { client_id, title, service_type: body.querySelector('#np-s').value, work_type: body.querySelector('#np-w').value });
+    if (!services.length) { toast('Selecione ao menos um serviço.', { error: true }); return false; }
+    const p = await api.post('/honorarios', data);
     toast(`Proposta ${p.number} criada.`); ctx.go(`#/propostas/orcamento/${p.id}`);
   } }] });
-  m.el.style.width = 'min(620px, calc(100vw - 32px))';
+  m.el.style.width = 'min(640px, calc(100vw - 32px))';
+}
+
+// Converte o interessado em cliente (conferindo duplicidades) — usado após o aceite
+export async function convertClientFlow(p) {
+  const r = await api.get(`/honorarios/${p.id}/client-matches`);
+  return new Promise((resolve) => {
+    const pr = r.prospect;
+    modal({ title: 'Converter interessado em cliente', body: html`<p class="small muted" style="margin-top:0">Os dados preenchidos na proposta serão reaproveitados. Nenhum acesso à Área do Cliente é liberado automaticamente.</p>
+      <dl class="kv tight mb-16"><dt>Nome</dt><dd>${pr.name || '—'}</dd><dt>CPF/CNPJ</dt><dd>${pr.doc || 'não informado'}</dd><dt>Telefone</dt><dd>${pr.phone || 'não informado'}</dd><dt>E-mail</dt><dd>${pr.email || 'não informado'}</dd></dl>
+      ${r.matches.length ? html`<div class="card flat small mb-16"><div class="row gap-8 mb-8 warning-text">${icon('alert', 'sm')}<b>Possível cadastro existente</b></div><div class="list">${r.matches.map((c) => html`<div class="list-item"><div class="grow"><div class="li-title">${c.name}${c.archived ? ' (arquivado)' : ''}</div><div class="li-sub">${c.why.join(', ')} · ${[c.doc, c.whatsapp || c.phone, c.email].filter(Boolean).join(' · ')}</div></div><button class="btn xs primary" data-link="${c.id}">Vincular a este cliente</button></div>`)}</div></div>` : html`<p class="small success-text">Nenhum cadastro parecido encontrado.</p>`}`,
+    actions: [{ label: 'Cancelar', value: null }, { label: r.matches.length ? 'Criar novo cadastro mesmo assim' : 'Criar cliente', primary: !r.matches.length, fn: async () => { const x = await api.post(`/honorarios/${p.id}/convert-client`, { force: true }); toast('Cliente cadastrado a partir da proposta.'); resolve(x.client_id); } }],
+    onClose: (v) => { if (v === null || v === false) resolve(null); } }).el.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-link]'); if (!b) return;
+      try { const x = await api.post(`/honorarios/${p.id}/convert-client`, { client_id: +b.dataset.link }); toast('Proposta vinculada ao cliente.'); document.querySelectorAll('.modal').forEach((m) => m.remove()); document.querySelectorAll('.overlay').forEach((o) => o.remove()); resolve(x.client_id); } catch (err) { fail(err); }
+    });
+  });
+}
+// Executa uma ação que exige cliente cadastrado, convertendo o interessado antes se necessário
+async function withClient(p, action) {
+  try { return await action(); } catch (e) {
+    if (!(e.data && e.data.need_client)) throw e;
+    const cid = await convertClientFlow(p); if (!cid) return null;
+    return action();
+  }
 }
 
 // ------------------------------ EDITOR DA PROPOSTA DE HONORÁRIOS ------------------------------
@@ -90,10 +129,11 @@ async function proposalEditor(ctx, id) {
   const L = S.meta.lists; const ex = p.extra || {};
   const reload = () => proposalEditor(ctx, id);
   const locked = p.status === 'aprovada';
+  const svcNames = (list) => list.map((x) => svcLabel(x.type)).join(' + ') || 'sem serviço';
   root.innerHTML = toHTML(html`
     <div class="hero doc-hero"><div class="crumbs"><a href="#/propostas">Propostas</a> ${icon('chevron', 'sm')} <a href="#/propostas">Orçamento de obra</a> ${icon('chevron', 'sm')} <span>${p.number}</span></div>
       <div class="row between top wrap gap-16"><div style="min-width:0"><h1>Proposta ${p.number}</h1>
-        <div class="info-row mt-8"><span>${icon('users', 'sm')}<a href="#/clientes/${p.client_id}">${p.client_name}</a></span><span>${icon('proposal', 'sm')}${svcLabel(p.service_type)}</span>${badge('PROPOSAL_STATUS', p.status)}${p.archived ? html`<span class="badge muted">Arquivada</span>` : ''}<span class="dirty-flag">alterações não salvas</span></div></div>
+        <div class="info-row mt-8"><span>${icon('users', 'sm')}${p.client_id ? html`<a href="#/clientes/${p.client_id}">${p.client_name}</a>` : html`${p.client_name || 'Interessado'} <span class="badge warning plain">interessado</span>`}</span><span>${icon('proposal', 'sm')}${svcNames(p.services)}</span>${badge('PROPOSAL_STATUS', p.status)}${p.archived ? html`<span class="badge muted">Arquivada</span>` : ''}<span class="dirty-flag">alterações não salvas</span></div></div>
         <div class="row wrap"><button class="btn" data-save>${icon('check')} Salvar</button><button class="btn primary" data-pdf>${icon('print')} Gerar PDF</button><button class="icon-btn" data-more title="Mais ações">${icon('more')}</button></div></div>
       <div class="status-bar mt-16" data-status></div></div>
     <div class="doc-grid mt-24">
@@ -101,38 +141,46 @@ async function proposalEditor(ctx, id) {
         <section class="card"><div class="card-head"><h3>Identificação</h3></div><div class="form-grid" data-sec="id">
           ${fld('number', 'Número da proposta', p.number, { req: true })}${fld('issue_date', 'Data', p.issue_date, { type: 'date', req: true })}
           ${fld('valid_until', 'Validade', p.valid_until, { type: 'date', req: true, hint: `Padrão: ${off.office.validity_days} dias` })}${fld('contact_name', 'Contato (A/C)', p.contact_name, { placeholder: 'Ex.: Sr. Heitor Matos' })}
-          <div class="field wide"><label>Cliente <span class="req">*</span></label><div data-client></div></div>
-          ${fld('title', 'Projeto / serviço', p.title, { wide: true, req: true })}
+          <div class="field wide"><label>Para quem é a proposta</label><div class="btn-group" data-who><button type="button" data-w="novo" class="${p.client_id ? '' : 'on'}">Interessado (sem cadastro)</button><button type="button" data-w="cliente" class="${p.client_id ? 'on' : ''}">Cliente cadastrado</button></div></div>
+          <div class="wide form-grid ${p.client_id ? 'hidden' : ''}" data-w-box="novo">
+            ${fld('prospect_name', 'Nome do interessado', p.prospect_name, { wide: true, req: true })}${fld('prospect_phone', 'Telefone / WhatsApp', p.prospect_phone, { type: 'tel' })}${fld('prospect_email', 'E-mail', p.prospect_email, { type: 'email' })}
+            ${fld('prospect_doc', 'CPF / CNPJ (opcional)', p.prospect_doc)}${fld('prospect_city', 'Cidade', p.prospect_city)}${fld('prospect_address', 'Endereço do interessado', p.prospect_address, { wide: true })}
+            <p class="wide small muted" style="margin:0">Os dados ficam guardados só nesta proposta. ${p.status === 'aprovada' ? html`<button type="button" class="btn xs primary" data-convert>Converter em cliente</button>` : 'Após o aceite, use “Converter em cliente”.'}</p></div>
+          <div class="field wide ${p.client_id ? '' : 'hidden'}" data-w-box="cliente"><label>Cliente <span class="req">*</span></label><div data-client></div></div>
+          ${fld('title', 'Projeto / serviço', p.title, { wide: true, req: true, attrs: 'data-sentence' })}
           ${fld('address', 'Endereço do projeto / obra', p.address, { wide: true })}${fld('city', 'Cidade', p.city)}${fld('area', 'Área aproximada (m²)', p.area, { type: 'number' })}
-          <div class="field"><label>Tipo de serviço <span class="req">*</span></label><select name="service_type">${L.SERVICE_TYPES.map((o) => html`<option value="${o.value}" ${o.value === p.service_type ? 'selected' : ''}>${o.label}</option>`)}</select></div>
-          ${fld('work_type', 'Tipo de obra', p.work_type, { type: 'select', options: L.WORK_TYPES })}
+          ${fld('work_type', 'Tipo de obra', p.work_type, { type: 'select', options: L.WORK_TYPES })}<div></div>
           <div class="field wide"><label>Projeto vinculado no sistema</label><div data-project></div><span class="hint">Opcional. Após a aprovação, você pode criar o projeto automaticamente.</span></div>
         </div></section>
 
-        <section class="card"><div class="card-head"><h3>Escopo</h3></div><div class="form-grid">
-          ${fld('summary', 'Resumo do projeto ou serviço', p.summary, { type: 'textarea', wide: true, rows: 4, placeholder: 'Ex.: Desenvolvimento de projeto de interiores para escritório corporativo com área aproximada de 65 m²…' })}
-          ${fld('scope', 'Escopo e entregas incluídas', p.scope, { type: 'textarea', wide: true, rows: 6, hint: 'Um item por linha — aparecem como lista no PDF.' })}
+        <section class="card"><div class="card-head"><h3>Serviços da proposta</h3><button type="button" class="btn sm" data-add-svc>${icon('plus', 'sm')} Adicionar serviço</button></div>
+          <p class="small muted" style="margin-top:0">Adicione um ou vários serviços. Se informar o valor de cada serviço, o valor total da proposta é a soma deles.</p>
+          <div data-svcs></div></section>
+
+        <section class="card"><div class="card-head"><h3>Resumo e condições do serviço</h3></div><div class="form-grid">
+          ${fld('summary', 'Resumo do projeto ou serviço', p.summary, { type: 'textarea', wide: true, rows: 4, placeholder: 'Ex.: desenvolvimento de projeto de interiores para escritório corporativo com área aproximada de 65 m²…' })}
+          ${p.scope ? fld('scope', 'Escopo (registrado antes da atualização do modelo)', p.scope, { type: 'textarea', wide: true, rows: 4, hint: 'Campo mantido apenas nesta proposta antiga. As novas propostas usam a seção “Projetos e entregas”.' }) : ''}
           ${fld('excluded', 'Serviços não incluídos', p.excluded, { type: 'textarea', wide: true, rows: 3, hint: 'Um item por linha.' })}
         </div></section>
 
-        <section class="card" data-type="projeto"><div class="card-head"><h3>Etapas, entregas e prazos</h3></div>
-          <div class="field mb-16"><label>Etapas e prazos</label><div data-stages></div></div>
-          <div class="form-grid">${fld('deliverables', 'Produtos a serem entregues', p.deliverables, { type: 'textarea', wide: true, rows: 6, hint: 'Um item por linha.' })}
-          ${fld('deadline_text', 'Prazo estimado (texto livre)', p.deadline_text, { wide: true, placeholder: 'Ex.: Projeto completo em até 45 dias úteis após o briefing' })}</div></section>
+        <section class="card" data-type="projeto"><div class="card-head"><h3>Projetos e entregas</h3><span class="small muted" data-svc-hint></span></div>
+          <div class="form-grid">${fld('deliverables', 'Produtos a serem entregues', p.deliverables, { type: 'textarea', wide: true, rows: 7, hint: 'Um item por linha. É a referência das entregas no PDF — acompanha os serviços escolhidos, sem repetir itens.' })}</div>
+          <div class="field mt-16 mb-16"><label>Etapas e prazos</label><div data-stages></div></div>
+          <div class="form-grid">${fld('deadline_text', 'Prazo estimado (texto livre)', p.deadline_text, { wide: true, placeholder: 'Ex.: projeto completo em até 45 dias úteis após o briefing' })}</div></section>
 
         <section class="card" data-type="acompanhamento"><div class="card-head"><h3>Acompanhamento de obra</h3></div><div class="form-grid" data-extra>
           ${fld('periodicidade', 'Periodicidade', ex.periodicidade, { list: 'dl-period', placeholder: 'Semanal, quinzenal, mensal…' })}${fld('visitas', 'Visitas incluídas', ex.visitas, { type: 'number' })}
           ${fld('periodo_inicio', 'Início do período', ex.periodo_inicio, { type: 'date' })}${fld('periodo_fim', 'Fim do período', ex.periodo_fim, { type: 'date' })}
           ${fld('cobranca', 'Forma de cobrança', ex.cobranca, { list: 'dl-cobranca', placeholder: 'Mensal fixo, por visita…' })}${fld('valor_visita', 'Valor por visita (opcional)', ex.valor_visita, { type: 'money' })}
-        </div><div class="form-grid mt-16">${fld('deadline_text', 'Prazo estimado', p.deadline_text, { wide: true, attrs: 'data-mirror="deadline_text"' })}</div></section>
+        </div><div class="form-grid mt-16 hidden" data-deadline-acomp>${fld('deadline_text', 'Prazo estimado', p.deadline_text, { wide: true })}</div></section>
 
         <section class="card" data-type="visita"><div class="card-head"><h3>Visita técnica avulsa</h3></div><div class="form-grid" data-extra>
           ${fld('visita_local', 'Local', ex.visita_local, { wide: true })}${fld('visita_finalidade', 'Finalidade', ex.visita_finalidade, { type: 'textarea', wide: true, rows: 3 })}
           ${fld('visita_data', 'Data prevista', ex.visita_data, { type: 'date' })}${fld('visita_duracao', 'Duração prevista', ex.visita_duracao, { placeholder: 'Ex.: até 2 horas' })}
-        </div><p class="small muted mb-0">O valor da visita é o valor total informado em Investimento.</p></section>
+        </div></section>
 
         <section class="card"><div class="card-head"><h3>Investimento e pagamento</h3></div><div class="form-grid">
-          ${fld('amount', 'Valor total', p.amount, { type: 'money', req: true })}${fld('down_payment', 'Entrada (se houver)', p.down_payment, { type: 'money' })}
+          ${fld('amount', 'Valor total', p.amount, { type: 'money', req: true, hint: 'Calculado pela soma dos serviços quando eles têm valor.' })}${fld('down_payment', 'Entrada (se houver)', p.down_payment, { type: 'money' })}
           ${fld('payment_method', 'Forma de pagamento', p.payment_method, { type: 'select', options: L.PAYMENT_METHODS })}<div></div>
           ${fld('pix_key', 'Chave Pix', p.pix_key, { hint: off.office.pix_key ? 'Cadastrada em Configurações › Escritório.' : 'Cadastre a chave em Configurações › Escritório para reaproveitar.' })}${fld('pix_name', 'Favorecido', p.pix_name)}
         </div><div class="field mt-16"><label>Entrada, parcelas e vencimentos</label><div data-plan></div></div></section>
@@ -142,11 +190,12 @@ async function proposalEditor(ctx, id) {
           ${fld('notes', 'Observações internas (não aparecem no PDF)', p.notes, { type: 'textarea', wide: true, rows: 2 })}</div></section>
 
         <section class="card"><div class="card-head"><h3>Texto da proposta</h3><div class="row gap-8">${p.template_outdated ? html`<button class="btn xs" data-tplnew>Usar versão ${p.template.version} do modelo</button>` : ''}<button class="btn xs" data-draft>${icon('eye', 'sm')} Rascunho em PDF</button></div></div>
-          <p class="small muted" style="margin-top:0">Texto baseado no modelo “${p.template ? p.template.name : svcLabel(p.service_type)}”${p.template_version ? ` (versão ${p.template_version})` : ''}. Edite livremente para esta proposta — o modelo não é alterado.</p>
+          <p class="small muted" style="margin-top:0">Texto baseado no modelo “${p.template ? p.template.name : '—'}”${p.template_version ? ` (versão ${p.template_version})` : ''}. Trechos entre <code>[[se …]]</code> e <code>[[fim]]</code> aparecem só quando o serviço correspondente está na proposta. Edite livremente — o modelo não é alterado.</p>
           <div data-body></div></section>
       </div>
       <aside class="col doc-side" style="gap:16px">
         <div class="card"><div class="card-head"><h3>Resumo</h3></div><dl class="kv tight"><dt>Valor total</dt><dd class="serif" style="font-size:24px" data-sum-total>${money(p.amount)}</dd>
+          <dt>Serviços</dt><dd data-sum-svc>${svcNames(p.services)}</dd>
           <dt>Parcelas</dt><dd data-sum-n>${p.payment_plan.length || '—'}</dd><dt>Validade</dt><dd>${date(p.valid_until)}${p.valid_until ? ` (${relDay(p.valid_until)})` : ''}</dd>
           ${p.sent_at ? html`<dt>Enviada em</dt><dd>${date(p.sent_at)}</dd>` : ''}${p.approved_at ? html`<dt>Aprovação</dt><dd>${date(p.approved_at)} · ${p.approved_by}${p.approval_notes ? html`<div class="small muted">${p.approval_notes}</div>` : ''}</dd>` : ''}
           ${p.refusal_reason ? html`<dt>Motivo da recusa</dt><dd>${p.refusal_reason}</dd>` : ''}
@@ -161,82 +210,145 @@ async function proposalEditor(ctx, id) {
 
   const tracker = dirtyTracker(root.querySelector('.doc-grid'));
   bindMoney(root);
+  const val = (n) => root.querySelector(`[name="${n}"]`);
+  let who = p.client_id ? 'cliente' : 'novo';
   const cli = combo({ name: 'client_id', options: refOptions('clients'), value: p.client_id, allowEmpty: false, onChange: () => tracker.mark() });
   root.querySelector('[data-client]').appendChild(cli);
+  root.querySelector('[data-who]').onclick = (e) => { const b = e.target.closest('[data-w]'); if (!b) return; who = b.dataset.w; $$('[data-w]', root).forEach((x) => x.classList.toggle('on', x === b)); $$('[data-w-box]', root).forEach((x) => x.classList.toggle('hidden', x.dataset.wBox !== who)); tracker.mark(); };
   const prj = combo({ name: 'project_id', options: refOptions('projects'), value: p.project_id, onChange: () => tracker.mark() });
   root.querySelector('[data-project]').appendChild(prj);
   const { rowsEditor } = await import('../lib.js');
-  const stages = rowsEditor({ columns: [{ key: 'etapa', label: 'Etapa', w: '1.4fr' }, { key: 'prazo', label: 'Prazo', w: '1fr' }], rows: p.stages, addLabel: 'Adicionar etapa', empty: 'Nenhuma etapa.', onChange: () => tracker.mark() });
+  const stages = rowsEditor({ columns: [{ key: 'etapa', label: 'Etapa', w: '1.4fr', sentence: true }, { key: 'prazo', label: 'Prazo', w: '1fr' }], rows: p.stages, addLabel: 'Adicionar etapa', empty: 'Nenhuma etapa.', onChange: () => tracker.mark() });
   root.querySelector('[data-stages]').appendChild(stages);
-  const val = (n) => root.querySelector(`[name="${n}"]`);
+
+  // ---- serviços (adicionar / remover) ----
+  let services = p.services.map((x) => ({ ...x }));
+  const svcBox = root.querySelector('[data-svcs]');
+  const renderSvcs = () => {
+    svcBox.innerHTML = toHTML(services.length ? html`<div class="svc-list">${services.map((x, i) => html`<div class="svc-row" data-i="${i}">
+      <div class="svc-name"><span class="badge accent plain">${i + 1}</span><b>${svcLabel(x.type)}</b></div>
+      <input class="input" data-k="description" placeholder="Descrição (opcional)" value="${x.description || ''}" data-sentence>
+      <div class="money-input"><span>R$</span><input class="input" data-k="amount" inputmode="decimal" placeholder="valor (opcional)" value="${x.amount == null || x.amount === '' ? '' : brl2(x.amount)}"></div>
+      <button type="button" class="icon-btn" data-rm-svc="${i}" title="Remover serviço">${icon('x', 'sm')}</button></div>`)}</div>
+      <div class="small mt-8 ${services.some((x) => x.amount != null && x.amount !== '') ? '' : 'muted'}" data-svc-total></div>` : html`<div class="empty sm">Nenhum serviço. Use “Adicionar serviço”.</div>`);
+    svcTotals(); showType(); updateSummary();
+  };
+  const svcTotals = () => {
+    const t = root.querySelector('[data-svc-total]'); if (!t) return;
+    const withV = services.filter((x) => x.amount != null && x.amount !== '');
+    if (withV.length) { const sum = round2(withV.reduce((a_, x) => a_ + Number(x.amount), 0)); t.textContent = `Soma dos serviços: ${money(sum)}${withV.length < services.length ? ' (há serviço sem valor — some-o manualmente se necessário)' : ''}`; if (withV.length === services.length || !parseNum(val('amount').value)) { val('amount').value = brl2(sum); plan.plan.check(); summary(); } }
+    else t.textContent = 'Informe o valor total da proposta em “Investimento”.';
+  };
+  svcBox.addEventListener('input', (e) => { const r = e.target.closest('[data-i]'); const k = e.target.dataset.k; if (!r || !k) return; services[+r.dataset.i][k] = k === 'amount' ? (e.target.value.trim() === '' ? null : parseNum(e.target.value)) : e.target.value; tracker.mark(); if (k === 'amount') svcTotals(); });
+  svcBox.addEventListener('change', (e) => { if (e.target.dataset.k === 'amount' && e.target.value.trim() !== '') e.target.value = brl2(parseNum(e.target.value)); });
+  // entregas, etapas e não incluídos acompanham os serviços, sem repetir itens
+  const linesOf = (name) => String(val(name).value || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const same = (a_, b_) => a_.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase() === b_.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const syncDefaults = (type, add) => {
+    const def = off.defaults[type] || {}; const others = services.filter((x) => x.type !== type).flatMap((x) => [x.type]);
+    const keepByOthers = (item, key) => others.some((t) => ((off.defaults[t] || {})[key] || []).some((y) => same(typeof y === 'string' ? y : y.etapa, item)));
+    for (const key of ['deliverables', 'excluded']) {
+      let cur = linesOf(key);
+      if (add) (def[key] || []).forEach((it) => { if (!cur.some((c) => same(c, it))) cur.push(it); });
+      else cur = cur.filter((c) => !(def[key] || []).some((it) => same(it, c)) || keepByOthers(c, key));
+      if (key === 'excluded' && services.some((x) => x.type === 'acompanhamento')) cur = cur.filter((c) => !/^acompanhamento de obra/i.test(c));
+      val(key).value = cur.join('\n');
+    }
+    let st = stages.rows.get();
+    if (add) (def.stages || []).forEach((it) => { if (!st.some((c) => same(c.etapa || '', it.etapa))) st.push({ ...it }); });
+    else st = st.filter((c) => !(def.stages || []).some((it) => same(it.etapa, c.etapa || '') && it.prazo === c.prazo) || keepByOthers(c.etapa || '', 'stages'));
+    stages.rows.set(st);
+  };
+  root.querySelector('[data-add-svc]').onclick = (e) => {
+    const avail = SVC().filter((o) => !services.some((x) => x.type === o.value));
+    if (!avail.length) return toast('Todos os serviços já foram adicionados.');
+    menu(e.currentTarget, [{ header: 'Adicionar serviço' }, ...avail.map((o) => ({ label: o.label, fn: () => { services.push({ type: o.value, description: '', amount: null }); syncDefaults(o.value, true); renderSvcs(); tracker.mark(); } }))]);
+  };
+  svcBox.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-rm-svc]'); if (!b) return;
+    const x = services[+b.dataset.rmSvc];
+    if (services.length === 1) return toast('A proposta precisa de ao menos um serviço.', { error: true });
+    if (!(await confirmDialog(`Remover “${svcLabel(x.type)}” da proposta? As entregas e etapas sugeridas para ele (e não usadas por outro serviço) também serão retiradas.`, { title: 'Remover serviço', ok: 'Remover' }))) return;
+    services.splice(+b.dataset.rmSvc, 1); syncDefaults(x.type, false); renderSvcs(); tracker.mark();
+  });
+
   const plan = planEditor({ plan: p.payment_plan, getTotal: () => parseNum(val('amount').value), getDown: () => parseNum(val('down_payment').value), onChange: () => { tracker.mark(); summary(); } });
   root.querySelector('[data-plan]').appendChild(plan);
   const bodyEd = bodyEditor({ value: p.body, fields: off.fields, blocks: off.blocks, onChange: () => tracker.mark() });
   root.querySelector('[data-body]').appendChild(bodyEd);
   root.querySelector('[data-att]').appendChild(el(html`<div class="card"></div>`)).appendChild(attachments('proposals', p.id, { title: 'Arquivos da proposta', extraMeta: { category: 'Propostas', client_id: p.client_id } }));
   const summary = () => { root.querySelector('[data-sum-total]').textContent = money(parseNum(val('amount').value)); root.querySelector('[data-sum-n]').textContent = plan.plan.get().length || '—'; };
+  const updateSummary = () => { const e_ = root.querySelector('[data-sum-svc]'); if (e_) e_.textContent = svcNames(services); };
   root.addEventListener('input', (e) => { if (e.target.name === 'amount' || e.target.name === 'down_payment') { summary(); plan.plan.check(); } });
-  // campos por tipo de serviço
-  const showType = () => {
-    const st = val('service_type').value;
-    $$('[data-type]', root).forEach((s) => s.classList.toggle('hidden', !(s.dataset.type === 'projeto' ? PROJECT_TYPES.includes(st) : s.dataset.type === st)));
-  };
-  showType();
-  val('service_type').addEventListener('change', async (e) => {
-    showType();
-    if (await confirmDialog(`Deseja substituir o texto da proposta pelo modelo “${svcLabel(e.target.value)}”? O texto atual será descartado.`, { title: 'Aplicar modelo do novo serviço', ok: 'Aplicar modelo' })) { collected.apply_template = true; await save(); }
-  });
-  // "Prazo estimado" aparece em dois lugares (projetos/acompanhamento): mantém sincronizado
+  // seções por serviço
+  function showType() {
+    const types = services.map((x) => x.type);
+    $$('[data-type]', root).forEach((s_) => s_.classList.toggle('hidden', !(s_.dataset.type === 'projeto' ? types.some(isProjectSvc) : types.includes(s_.dataset.type))));
+    const acompOnly = types.includes('acompanhamento') && !types.some(isProjectSvc);
+    const da = root.querySelector('[data-deadline-acomp]'); if (da) { da.classList.toggle('hidden', !acompOnly); da.querySelector('input').disabled = !acompOnly; }
+    const pd = root.querySelector('[data-type="projeto"] [name="deadline_text"]'); if (pd) pd.disabled = !types.some(isProjectSvc);
+    const h = root.querySelector('[data-svc-hint]'); if (h) h.textContent = types.filter(isProjectSvc).map((t) => svcLabel(t)).join(' + ');
+  }
+  renderSvcs();
   root.addEventListener('input', (e) => { if (e.target.name === 'deadline_text') $$('[name="deadline_text"]', root).forEach((i) => { if (i !== e.target) i.value = e.target.value; }); });
 
-  const collected = {};
   const gather = () => {
     const v = readFields(root.querySelector('.doc-grid'));
     const extra = {}; ['periodicidade', 'visitas', 'periodo_inicio', 'periodo_fim', 'cobranca', 'valor_visita', 'visita_local', 'visita_finalidade', 'visita_data', 'visita_duracao'].forEach((k) => { extra[k] = v[k] ?? ''; delete v[k]; });
-    return { ...v, client_id: cli.combo.get(), project_id: prj.combo.get() || null, extra, stages: stages.rows.get(), payment_plan: plan.plan.get(), body: bodyEd.body.get(), ...collected };
+    $$('[data-svcs] input[data-sentence]', root).forEach((i, idx) => { if (services[idx]) services[idx].description = i.value; });
+    const out = { ...v, client_id: who === 'cliente' ? cli.combo.get() || null : null, project_id: prj.combo.get() || null, extra, services, stages: stages.rows.get(), payment_plan: plan.plan.get(), body: bodyEd.body.get() };
+    if (who === 'cliente') ['prospect_name', 'prospect_phone', 'prospect_email', 'prospect_doc', 'prospect_city', 'prospect_address'].forEach((k) => delete out[k]);
+    return out;
   };
   const save = async ({ quiet } = {}) => {
     const data = gather();
-    if (!data.client_id) { toast('Selecione o cliente.', { error: true }); return false; }
+    if (who === 'cliente' && !data.client_id) { toast('Selecione o cliente.', { error: true }); return false; }
+    if (who === 'novo' && !String(data.prospect_name || '').trim()) { toast('Informe o nome do interessado.', { error: true }); return false; }
     if (!String(data.title || '').trim()) { toast('Informe o projeto ou serviço.', { error: true }); return false; }
+    if (!services.length) { toast('Adicione ao menos um serviço.', { error: true }); return false; }
     const b = root.querySelector('[data-save]'); b.disabled = true;
-    try { await api.put(`/honorarios/${id}`, data); tracker.clean(); if (!quiet) toast('Proposta salva.'); delete collected.apply_template; reload(); return true; } catch (e) { fail(e); b.disabled = false; return false; }
+    try { await api.put(`/honorarios/${id}`, data); tracker.clean(); if (!quiet) toast('Proposta salva.'); reload(); return true; } catch (e) { fail(e); b.disabled = false; return false; }
   };
   root.querySelector('[data-save]').onclick = () => save();
   const pdfUrl = `/pdf/proposal/${id}`;
   root.querySelector('[data-pdf]').onclick = () => openPdf(pdfUrl, { dirty: tracker.dirty, save: () => save({ quiet: true }), draftUrl: `${pdfUrl}?draft=1` });
   root.querySelector('[data-draft]').onclick = () => openPdf(`${pdfUrl}?draft=1`, { dirty: tracker.dirty, save: () => save({ quiet: true }) });
   const tn = root.querySelector('[data-tplnew]'); if (tn) tn.onclick = async () => { if (await confirmDialog('Substituir o texto desta proposta pela versão mais recente do modelo? As edições feitas no texto desta proposta serão perdidas.', { title: 'Atualizar texto', ok: 'Atualizar' })) { await api.post(`/honorarios/${id}/reload-template`); toast('Texto atualizado.'); reload(); } };
+  const cv = root.querySelector('[data-convert]'); if (cv) cv.onclick = async () => { if (tracker.dirty && !(await save({ quiet: true }))) return; if (await convertClientFlow(p)) reload(); };
   root.querySelector('[data-more]').onclick = (e) => menu(e.currentTarget, [
     { label: 'Visualizar rascunho em PDF', icon: 'eye', fn: () => openPdf(`${pdfUrl}?draft=1`, { dirty: tracker.dirty, save: () => save({ quiet: true }) }) },
     { label: 'Baixar PDF', icon: 'download', fn: () => openPdf(`${pdfUrl}?download=1`, { dirty: tracker.dirty, save: () => save({ quiet: true }), draftUrl: `${pdfUrl}?draft=1` }) },
     { label: 'Duplicar proposta', icon: 'copy', fn: async () => { const d = await api.post(`/honorarios/${id}/duplicate`); toast(`Proposta duplicada como ${d.number}.`); ctx.go(`#/propostas/orcamento/${d.id}`); } },
-    { label: 'Restaurar texto do modelo', icon: 'refresh', fn: async () => { if (await confirmDialog('Substituir o texto desta proposta pelo modelo atual do tipo de serviço?', { title: 'Restaurar texto', ok: 'Restaurar' })) { await api.post(`/honorarios/${id}/reload-template`); reload(); } } },
-    { label: p.archived ? 'Restaurar do arquivo' : 'Arquivar', icon: 'archive', fn: async () => { await archiveRow('proposals', p, p.archived ? 0 : 1); reload(); } },
-    '-', { label: 'Excluir proposta', icon: 'trash', danger: true, fn: async () => { try { if (await deleteRow('proposals', p, p.number)) ctx.go('#/propostas'); } catch (err) { fail(err); } } },
+    !p.client_id ? { label: 'Converter interessado em cliente', icon: 'users', fn: async () => { if (await convertClientFlow(p)) reload(); } } : null,
+    { label: 'Restaurar texto do modelo', icon: 'refresh', fn: async () => { if (await confirmDialog('Substituir o texto desta proposta pelo modelo atual?', { title: 'Restaurar texto', ok: 'Restaurar' })) { await api.post(`/honorarios/${id}/reload-template`); reload(); } } },
+    { label: p.archived ? 'Restaurar do arquivo' : 'Arquivar', icon: p.archived ? 'refresh' : 'archive', fn: async () => { await archiveRow('proposals', p, p.archived ? 0 : 1); reload(); } },
+    '-', { label: 'Excluir definitivamente', icon: 'trash', danger: true, fn: async () => { try { if (await deleteRow('proposals', p, p.number)) ctx.go('#/propostas'); } catch (err) { fail(err); } } },
   ]);
 
   // barra de status e próximos passos
   const bar = root.querySelector('[data-status]');
   const st = p.status;
-  bar.innerHTML = toHTML(html`<div class="steps">${['elaboracao', 'enviada', 'aprovada'].map((s, i) => html`<span class="step ${s === st || (st === 'aprovada' && i < 2) || (st === 'enviada' && i < 1) ? 'on' : ''}">${label('PROPOSAL_STATUS', s)}</span>`)}${['recusada', 'expirada'].includes(st) ? html`<span class="step bad on">${label('PROPOSAL_STATUS', st)}</span>` : ''}</div>
+  bar.innerHTML = toHTML(html`<div class="steps">${['elaboracao', 'enviada', 'aprovada'].map((s_, i) => html`<span class="step ${s_ === st || (st === 'aprovada' && i < 2) || (st === 'enviada' && i < 1) ? 'on' : ''}">${label('PROPOSAL_STATUS', s_)}</span>`)}${['recusada', 'expirada'].includes(st) ? html`<span class="step bad on">${label('PROPOSAL_STATUS', st)}</span>` : ''}</div>
     <div class="row wrap gap-8">
       ${st === 'elaboracao' ? html`<button class="btn sm" data-st="enviada">${icon('mail', 'sm')} Marcar como enviada</button>` : ''}
       ${['enviada', 'elaboracao', 'expirada'].includes(st) ? html`<button class="btn sm primary" data-approve>${icon('check', 'sm')} Registrar aprovação</button>` : ''}
       ${st === 'enviada' ? html`<button class="btn sm" data-refuse>Recusada</button><button class="btn sm" data-st="expirada">Expirada</button>` : ''}
-      ${st === 'aprovada' ? html`<button class="btn sm primary" data-contract>${icon('contract', 'sm')} Gerar contrato a partir da proposta</button>${S.user.finance ? html`<button class="btn sm" data-recv>${icon('in', 'sm')} Cadastrar parcelas no financeiro</button>` : ''}${!p.project_id ? html`<button class="btn sm" data-proj>${icon('folder', 'sm')} Criar projeto</button>` : ''}` : ''}
+      ${st === 'aprovada' && !p.client_id ? html`<button class="btn sm primary" data-convert2>${icon('users', 'sm')} Converter interessado em cliente</button>` : ''}
+      ${st === 'aprovada' ? html`<button class="btn sm ${p.client_id ? 'primary' : ''}" data-contract>${icon('contract', 'sm')} Gerar contrato a partir da proposta</button>${S.user.finance ? html`<button class="btn sm" data-recv>${icon('in', 'sm')} Cadastrar parcelas no financeiro</button>` : ''}${!p.project_id ? html`<button class="btn sm" data-proj>${icon('folder', 'sm')} Criar projeto</button>` : ''}` : ''}
       ${st !== 'elaboracao' ? html`<button class="btn sm ghost" data-st="elaboracao">Voltar para rascunho</button>` : ''}</div>`);
   const setStatus = async (status, extra = {}) => { if (tracker.dirty && !(await save({ quiet: true }))) return; try { await api.post(`/honorarios/${id}/status`, { status, ...extra }); toast(`Status: ${label('PROPOSAL_STATUS', status)}.`); reload(); } catch (e) { fail(e); } };
   bar.onclick = async (e) => {
     const b = e.target.closest('[data-st]'); if (b) return setStatus(b.dataset.st);
-    if (e.target.closest('[data-refuse]')) return modal({ title: 'Proposta recusada', body: html`<div class="field"><label>Motivo da recusa (opcional)</label><input id="rr"></div>`, actions: [{ label: 'Cancelar' }, { label: 'Registrar recusa', danger: true, fn: (m) => setStatus('recusada', { refusal_reason: m.querySelector('#rr').value }) }] });
-    if (e.target.closest('[data-approve]')) return approveModal(p, async (data) => { if (tracker.dirty && !(await save({ quiet: true }))) return false; await api.post(`/honorarios/${id}/status`, { status: 'aprovada', ...data }); toast('Aprovação registrada.'); afterApproval(ctx, id); });
-    if (e.target.closest('[data-contract]')) return contractFromProposal(ctx, p);
-    if (e.target.closest('[data-recv]')) return receivablesModal('proposal', id, reload);
-    if (e.target.closest('[data-proj]')) { const r = await api.post(`/honorarios/${id}/project`); toast('Projeto criado a partir da proposta.'); ctx.go(`#/projetos/${r.project_id}`); }
+    try {
+      if (e.target.closest('[data-refuse]')) return modal({ title: 'Proposta recusada', body: html`<div class="field"><label>Motivo da recusa (opcional)</label><input id="rr" data-sentence></div>`, actions: [{ label: 'Cancelar' }, { label: 'Registrar recusa', danger: true, fn: (m) => setStatus('recusada', { refusal_reason: m.querySelector('#rr').value }) }] });
+      if (e.target.closest('[data-approve]')) return approveModal(p, async (data) => { if (tracker.dirty && !(await save({ quiet: true }))) return false; await api.post(`/honorarios/${id}/status`, { status: 'aprovada', ...data }); toast('Aprovação registrada.'); afterApproval(ctx, id); });
+      if (e.target.closest('[data-convert2]')) { if (await convertClientFlow(p)) reload(); return; }
+      if (e.target.closest('[data-contract]')) return contractFromProposal(ctx, p);
+      if (e.target.closest('[data-recv]')) return withClient(p, () => receivablesModal('proposal', id, reload, true));
+      if (e.target.closest('[data-proj]')) { const r = await withClient(p, () => api.post(`/honorarios/${id}/project`)); if (r) { toast('Projeto criado a partir da proposta.'); ctx.go(`#/projetos/${r.project_id}`); } }
+    } catch (err) { fail(err); }
   };
   if (locked) root.querySelector('.doc-hero').appendChild(el(html`<div class="small muted mt-8">Proposta aprovada. Alterações continuam possíveis, mas o que já foi aprovado pelo cliente deve ser preservado.</div>`));
-  // pendências para emissão (conferidas no servidor)
   api.get(`${pdfUrl}?check=1`).then((r) => { root.querySelector('[data-problems]').innerHTML = toHTML(problemsBox(r.problems)); }).catch(() => {});
 }
 
@@ -252,7 +364,12 @@ function approveModal(p, onOk) {
   } }] });
 }
 async function afterApproval(ctx, id) {
-  const p = await api.get(`/honorarios/${id}`);
+  let p = await api.get(`/honorarios/${id}`);
+  if (!p.client_id) {
+    const cid = await convertClientFlow(p);
+    if (!cid) { toast('Proposta aprovada. Converta o interessado em cliente quando quiser gerar contrato, projeto ou parcelas.'); return proposalEditor(ctx, id); }
+    p = await api.get(`/honorarios/${id}`);
+  }
   modal({ title: 'Proposta aprovada', body: html`<p class="muted" style="margin-top:0">O que deseja fazer agora? Todas as opções reaproveitam os dados da proposta.</p>
     <label class="toggle"><input type="checkbox" id="aa-c" checked><span class="sw"></span><span>Gerar o contrato a partir da proposta</span></label>
     ${!p.project_id ? html`<label class="toggle"><input type="checkbox" id="aa-p" checked><span class="sw"></span><span>Criar o projeto (com etapas padrão)</span></label>` : ''}
@@ -268,7 +385,7 @@ async function afterApproval(ctx, id) {
   } }] });
 }
 async function contractFromProposal(ctx, p) {
-  try { const r = await api.post(`/honorarios/${p.id}/contract`); toast('Contrato criado a partir da proposta.'); ctx.go(`#/contratos/editor/${r.id}`); }
+  try { const r = await withClient(p, () => api.post(`/honorarios/${p.id}/contract`)); if (!r) return; toast('Contrato criado a partir da proposta.'); ctx.go(`#/contratos/editor/${r.id}`); }
   catch (e) {
     if (e.status !== 409) return fail(e);
     const cid = e.data && e.data.contract_id;
@@ -278,9 +395,9 @@ async function contractFromProposal(ctx, p) {
 }
 
 // Cadastrar parcelas no financeiro com conferência de duplicidade
-export async function receivablesModal(source, id, onDone) {
+export async function receivablesModal(source, id, onDone, rethrow) {
   let prev;
-  try { prev = await api.post('/plan-receivables', { source, id }); } catch (e) { return fail(e); }
+  try { prev = await api.post('/plan-receivables', { source, id }); } catch (e) { if (rethrow && e.data && e.data.need_client) throw e; return fail(e); }
   modal({ title: 'Cadastrar parcelas no financeiro', body: html`<p class="small muted" style="margin-top:0">${prev.to_create ? `${prev.to_create} parcela(s) serão cadastradas em Financeiro › Entradas.` : 'Todas as parcelas já estão cadastradas no financeiro.'}${prev.already ? ` ${prev.already} já existem e não serão duplicadas.` : ''}</p>
     <div class="table-wrap"><table class="t compact"><thead><tr><th>Parcela</th><th>Vencimento</th><th class="right">Valor</th><th>Situação</th></tr></thead><tbody>
     ${prev.rows.map((r) => html`<tr><td>${r.n}/${r.total} ${r.label ? html`<span class="muted small">${r.label}</span>` : ''}</td><td>${date(r.due_date)}</td><td class="right">${money(r.amount)}</td><td>${r.existing ? html`<span class="badge success plain">já cadastrada</span><div class="tiny muted">${r.existing.description}</div>` : html`<span class="badge info plain">será cadastrada</span>`}</td></tr>`)}</tbody></table></div>`,
@@ -362,7 +479,7 @@ async function contracts(ctx) {
 }
 async function prepareLegacy(ctx, c) {
   modal({ title: 'Preparar contrato pelo modelo', body: html`<p class="small muted" style="margin-top:0">O texto do modelo será aplicado a este contrato e os dados das partes serão preenchidos a partir dos cadastros. Nada no financeiro é alterado.</p>
-    <div class="field"><label>Modelo de contrato</label><select id="pl-s">${S.meta.lists.SERVICE_TYPES.map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></div>`,
+    <div class="field"><label>Modelo de contrato</label><select id="pl-s">${S.meta.lists.SERVICE_TYPES_ALL.map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></div>`,
   actions: [{ label: 'Cancelar' }, { label: 'Aplicar modelo', primary: true, fn: async (m) => { await api.post(`/contract-docs/${c.id}/reload-template`, { service_type: m.querySelector('#pl-s').value }); ctx.go(`#/contratos/editor/${c.id}`); } }] });
 }
 async function newContract(ctx) {
@@ -372,7 +489,7 @@ async function newContract(ctx) {
     <div data-p="prop"><div class="field"><label>Proposta (aprovadas e enviadas)</label>${props.length ? html`<select id="nc-p">${props.map((p) => html`<option value="${p.id}">${p.number} — ${p.client_name} — ${p.title} (${label('PROPOSAL_STATUS', p.status)})</option>`)}</select>` : html`<div class="small muted">Nenhuma proposta aprovada ou enviada no Orçamento de obra.</div>`}</div>
       <p class="small muted">Reaproveita cliente, escritório, projeto, endereço, serviço, escopo, prazos, valores, parcelas, forma de pagamento e Pix.</p></div>
     <div data-p="tpl" class="hidden"><div class="form-grid"><div class="field wide"><label>Cliente</label><div data-cli></div></div>
-      <div class="field"><label>Modelo de contrato</label><select id="nc-s">${S.meta.lists.SERVICE_TYPES.map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></div>
+      <div class="field"><label>Modelo de contrato</label><select id="nc-s">${S.meta.lists.SERVICE_TYPES_ALL.map((o) => html`<option value="${o.value}">${o.label}</option>`)}</select></div>
       <div class="field"><label>Projeto (opcional)</label><div data-prj></div></div></div></div></div>`);
   const cli = combo({ name: 'client_id', options: refOptions('clients'), allowEmpty: false }); body.querySelector('[data-cli]').appendChild(cli);
   const prj = combo({ name: 'project_id', options: refOptions('projects') }); body.querySelector('[data-prj]').appendChild(prj);
@@ -403,7 +520,7 @@ async function contractEditor(ctx, id) {
     <div class="doc-grid mt-24">
       <div class="col" style="gap:16px">
         <section class="card"><div class="card-head"><h3>Modelo</h3></div><div class="form-grid">
-          <div class="field"><label>Tipo de serviço / modelo</label><select name="service_type">${L.SERVICE_TYPES.map((o) => html`<option value="${o.value}" ${o.value === c.service_type ? 'selected' : ''}>${o.label}</option>`)}</select></div>
+          <div class="field"><label>Tipo de serviço / modelo</label><select name="service_type">${L.SERVICE_TYPES_ALL.map((o) => html`<option value="${o.value}" ${o.value === c.service_type ? 'selected' : ''}>${o.label}</option>`)}</select></div>
           <div class="field"><label>Versão do modelo usada</label><div class="small" style="padding-top:10px">${c.template ? html`${c.template.name} · versão ${c.template_version}${c.template_outdated ? html` <span class="badge warning plain">há versão ${c.template.version}</span>` : ''}${c.template.status === 'pendente' ? html` <span class="badge danger plain">modelo pendente</span>` : ''}` : '—'}</div></div>
           <div class="field wide"><label>Projeto vinculado</label><div data-project></div></div></div></section>
 

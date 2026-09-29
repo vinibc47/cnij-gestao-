@@ -25,7 +25,7 @@ router.get('/projects/:id/overview', wrap((req, res) => {
   const u = req.user; const id = Number(req.params.id);
   const project = fetchOne(R.projects, u, id);
   const fin = P.canFinance(u);
-  const docs = L('documents', u, { f_project_id: id });
+  const docs = L('documents', u, { f_project_id: id, archived: '0' });
   const out = {
     project,
     client: project.client_id ? get('SELECT id, name, phone, whatsapp, email, city FROM clients WHERE id = ?', project.client_id) : null,
@@ -81,7 +81,7 @@ router.post('/works/:id/phases/reorder', wrap((req, res) => {
 router.get('/works/:id/overview', wrap((req, res) => {
   const u = req.user; const id = Number(req.params.id);
   const work = fetchOne(R.works, u, id);
-  const docs = L('documents', u, { f_work_id: id });
+  const docs = L('documents', u, { f_work_id: id, archived: '0' });
   const logDocs = all("SELECT id, entity_id, title, file_name, mime FROM documents WHERE entity = 'work_logs' AND entity_id IN (SELECT id FROM work_logs WHERE work_id = ?)", id);
   const logs = L('work_logs', u, { f_work_id: id }).map((l) => ({
     ...l, photos: logDocs.filter((d) => d.entity_id === l.id),
@@ -112,7 +112,7 @@ router.get('/clients/:id/overview', wrap((req, res) => {
     proposals: L('proposals', u, { f_client_id: id }),
     contracts: L('contracts', u, { f_client_id: id }),
     events: L('events', u, { f_client_id: id, sort: 'start_at', dir: 'desc' }),
-    documents: L('documents', u, { f_client_id: id }),
+    documents: L('documents', u, { f_client_id: id, archived: '0' }),
     tasks: L('tasks', u, { f_client_id: id }),
     interactions: L('client_interactions', u, { f_client_id: id }),
     portal_users: all("SELECT id, name, email, active, last_login FROM users WHERE role = 'cliente' AND client_id = ?", id),
@@ -146,7 +146,7 @@ router.get('/suppliers/:id/overview', wrap((req, res) => {
     supplier,
     quotes: L('quotes', u, { f_supplier_id: id }),
     reviews: L('supplier_reviews', u, { f_supplier_id: id }),
-    documents: L('documents', u, { f_supplier_id: id }),
+    documents: L('documents', u, { f_supplier_id: id, archived: '0' }),
     phases: all(`SELECT wp.name, wp.status, wp.progress, w.name work_name, w.id work_id, p.name project_name FROM work_phases wp JOIN works w ON w.id = wp.work_id JOIN projects p ON p.id = w.project_id WHERE wp.supplier_id = ?`, id),
   };
   out.projects = all(`SELECT DISTINCT p.id, p.name, p.status, c.name client_name FROM projects p LEFT JOIN clients c ON c.id = p.client_id WHERE p.id IN (
@@ -302,7 +302,7 @@ const upload = multer({
   limits: { fileSize: (Number(process.env.MAX_UPLOAD_MB) || 30) * 1024 * 1024, files: 20 },
   fileFilter: (req, file, cb) => (BLOCKED.test(file.originalname) ? cb(new HttpError(400, 'Tipo de arquivo não permitido.')) : cb(null, true)),
 });
-const ATTACHABLE = ['tasks', 'projects', 'project_phases', 'works', 'work_logs', 'expenses', 'incomes', 'contracts', 'proposals', 'quotes', 'suppliers', 'clients', 'events'];
+const ATTACHABLE = ['tasks', 'projects', 'project_phases', 'works', 'work_logs', 'expenses', 'incomes', 'contracts', 'proposals', 'quotes', 'suppliers', 'clients', 'events', 'site_signs', 'meeting_minutes', 'receipts'];
 
 router.post('/files', upload.array('files', 20), wrap((req, res) => {
   const u = req.user; const b = req.body || {};

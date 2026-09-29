@@ -232,7 +232,7 @@ CREATE TABLE IF NOT EXISTS quotes (
 CREATE TABLE IF NOT EXISTS proposals (
   id INTEGER PRIMARY KEY,
   number TEXT,
-  client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE RESTRICT,
+  client_id INTEGER REFERENCES clients(id) ON DELETE RESTRICT,
   title TEXT NOT NULL,
   project_type TEXT,
   area REAL,
@@ -578,3 +578,85 @@ CREATE TABLE IF NOT EXISTS work_budget_items (
 );
 CREATE INDEX IF NOT EXISTS ix_budget_work ON work_budget_items(work_id, position);
 CREATE INDEX IF NOT EXISTS ix_issues_contract ON contract_issues(contract_id);
+
+-- =====================================================================
+-- Atas, recibos, placas de obra e avisos ao cliente (v3)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS meeting_minutes (
+  id INTEGER PRIMARY KEY,
+  number TEXT,
+  date TEXT NOT NULL,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  title TEXT,
+  location TEXT,
+  participants TEXT,
+  content TEXT,
+  next_steps TEXT,
+  client_visible INTEGER NOT NULL DEFAULT 0,
+  archived INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_minutes_project ON meeting_minutes(project_id);
+
+CREATE TABLE IF NOT EXISTS receipts (
+  id INTEGER PRIMARY KEY,
+  number TEXT,
+  status TEXT NOT NULL DEFAULT 'rascunho',
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL,
+  income_id INTEGER REFERENCES incomes(id) ON DELETE SET NULL,
+  payer_name TEXT, payer_doc TEXT,
+  amount REAL NOT NULL DEFAULT 0,
+  reference_prep TEXT DEFAULT 'ao',
+  description TEXT,
+  installment_label TEXT,
+  payment_method TEXT,
+  paid_at TEXT,
+  city TEXT,
+  issue_date TEXT,
+  receiver_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  receiver_name TEXT, receiver_doc TEXT, receiver_address TEXT, receiver_phone TEXT,
+  two_copies INTEGER NOT NULL DEFAULT 0,
+  manual_confirmed INTEGER NOT NULL DEFAULT 0,
+  notes TEXT,
+  snapshot TEXT,
+  issued_at TEXT,
+  issued_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  archived INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_receipts_income ON receipts(income_id);
+
+CREATE TABLE IF NOT EXISTS site_signs (
+  id INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  size TEXT NOT NULL DEFAULT '150x100',
+  orientation TEXT NOT NULL DEFAULT 'paisagem',
+  theme TEXT NOT NULL DEFAULT 'escuro',
+  data TEXT,
+  photo_doc_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+  photo_x REAL NOT NULL DEFAULT 50,
+  photo_y REAL NOT NULL DEFAULT 50,
+  photo_zoom REAL NOT NULL DEFAULT 1,
+  archived INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS portal_notices (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  message TEXT NOT NULL,
+  items TEXT,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

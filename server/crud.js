@@ -20,6 +20,7 @@ function coerce(f, v) {
     case 'date': { const s = String(v).slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new HttpError(400, `Data inválida em "${f.label}".`); return s; }
     case 'datetime': return String(v).replace(' ', 'T').slice(0, 16);
     case 'suppliers': case 'users': return Array.isArray(v) ? v.map(Number) : v;
+    case 'json': return typeof v === 'string' ? v.slice(0, 50000) : JSON.stringify(v).slice(0, 50000);
     default: return String(v).trim().slice(0, 20000);
   }
 }

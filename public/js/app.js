@@ -13,8 +13,11 @@ const NAV = [
   ['clientes', 'clientes', 'Clientes', 'users'],
   ['propostas', 'propostas', 'Propostas', 'proposal'],
   ['contratos', 'contratos', 'Contratos', 'contract'],
+  ['recibos', 'recibos', 'Recibos', 'receipt'],
   ['fornecedores', 'fornecedores', 'Fornecedores', 'truck'],
   ['agenda', 'agenda', 'Agenda', 'calendar'],
+  ['atas', 'atas', 'Ata de Reunião', 'diary'],
+  ['placas', 'placas', 'Criar placa de obra', 'sign'],
   ['documentos', 'documentos', 'Documentos', 'docs'],
   ['relatorios', 'relatorios', 'Relatórios', 'chart'],
   ['configuracoes', 'configuracoes', 'Configurações', 'settings'],
@@ -25,6 +28,7 @@ const VIEWS = {
   propostas: () => import('./views/commercial.js'), contratos: () => import('./views/commercial.js'), fornecedores: () => import('./views/suppliers.js'),
   agenda: () => import('./views/agenda.js'), documentos: () => import('./views/documents.js'), relatorios: () => import('./views/reports.js'),
   configuracoes: () => import('./views/settings.js'), notificacoes: () => import('./views/notifications.js'),
+  recibos: () => import('./views/receipts.js'), atas: () => import('./views/minutes.js'), placas: () => import('./views/signs.js'),
 };
 const MODULE_OF = { '': 'dashboard', notificacoes: 'dashboard' };
 
@@ -67,12 +71,13 @@ function renderShell() {
   root.innerHTML = toHTML(html`<div class="app">
     <aside class="sidebar">
       <a class="brand" href="#/" title="Início"><img class="brand-logo" src="/logo" width="1016" height="353" alt="Carla Nogueira & Irineu Junior — Arquitetura | Interiores"></a>
-      <nav class="nav">${nav.map(([m, path, label, ic], i) => html`${i === 10 ? html`<div class="sep"></div>` : ''}<a href="#/${path}" data-nav="${path}" title="${label}">${icon(ic)}<span class="lbl">${label}</span><span class="count hidden" data-count="${path}"></span></a>`)}</nav>
+      <nav class="nav">${nav.map(([m, path, label, ic], i) => html`${m === 'documentos' && i ? html`<div class="sep"></div>` : ''}<a href="#/${path}" data-nav="${path}" title="${label}">${icon(ic)}<span class="lbl">${label}</span><span class="count hidden" data-count="${path}"></span></a>`)}</nav>
       <div class="side-user">${avatar(u)}<div class="who"><b class="ellipsis">${u.name}</b><span class="small muted">${({ admin: 'Administrador', gestor: 'Gestor', colaborador: 'Colaborador', estagiario: 'Estagiário' })[u.role]}</span></div>
         <button class="icon-btn" data-user title="Minha conta">${icon('more')}</button></div>
     </aside>
     <div class="main">
       <header class="topbar">
+        <button class="icon-btn mobile-only m-search" data-msearch title="Pesquisar">${icon('search')}</button>
         <a class="m-brand mobile-only" href="#/"><img class="brand-logo" src="/logo" width="1016" height="353" alt="Carla Nogueira & Irineu Junior"></a>
         <div class="search">${icon('search')}<input id="gsearch" placeholder="Pesquisar clientes, projetos, fornecedores, tarefas…" autocomplete="off"><kbd>/</kbd><div class="search-results hidden"></div></div>
         <div class="top-actions">
@@ -93,6 +98,8 @@ function renderShell() {
   $$('[data-user]').forEach((b) => (b.onclick = () => userMenu(b)));
   $$('[data-quick]').forEach((b) => (b.onclick = () => quickMenu(b)));
   $('[data-notif]').onclick = notifPanel;
+  $('[data-msearch]').onclick = () => { const tb = $('.topbar'); tb.classList.toggle('search-open'); if (tb.classList.contains('search-open')) $('#gsearch').focus(); };
+  $('#gsearch').addEventListener('blur', () => setTimeout(() => { if (!$('#gsearch').value) $('.topbar').classList.remove('search-open'); }, 200));
   $('[data-more]').onclick = (e) => menu(e.currentTarget, nav.map(([m, path, label, ic]) => ({ label, icon: ic, fn: () => go('#/' + path) })));
   setupSearch();
   refreshBadges();
