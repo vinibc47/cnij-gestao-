@@ -224,12 +224,14 @@ async function send(res, docDef, filename, download) {
 
 // Placa de obra: página no tamanho físico escolhido, arte vetorial (SVG) ocupando a página inteira
 // Placa: uma página no tamanho físico (corte + sangria), sem margens; tudo vetorial exceto a foto.
-function signDoc(svg, wmm, hmm, title, { bleed = 0, subject = '' } = {}) {
+// images: { 'nome-curto': Buffer } — a foto é entregue ao PDF como arquivo binário, e não como texto base64 dentro do SVG
+// (o SVG com a foto em base64 fazia a geração consumir vários GB de memória e derrubar o servidor)
+function signDoc(svg, wmm, hmm, title, { bleed = 0, subject = '', images = {} } = {}) {
   const pt = (mm) => (mm * 72) / 25.4;
   const W = pt(wmm + 2 * bleed); const H = pt(hmm + 2 * bleed);
   return { pageSize: { width: W, height: H }, pageMargins: [0, 0, 0, 0],
     info: { title, subject, author: docs.office().name, creator: 'CN&IJ Gestão', producer: 'CN&IJ Gestão' },
-    content: [{ svg, width: W, height: H, font: 'Inter' }], defaultStyle: { font: 'Inter' },
+    content: [{ svg, width: W, height: H, font: 'Inter', options: { imageCallback: (link) => (images[link] ? images[link] : String(link).replace(/\s+/g, '')) } }], defaultStyle: { font: 'Inter' },
     // caixas do PDF: TrimBox = tamanho final de corte; BleedBox = corte + sangria
     _boxes: { trim: [pt(bleed), pt(bleed), W - pt(bleed), H - pt(bleed)], bleed: [0, 0, W, H] } };
 }
@@ -291,4 +293,30 @@ function iccFrom(buf) {
     return img;
   };
 }
-module.exports = { signDoc, build, render, send, tokensToContent, sectionTitle, subTitle, para, note, bullet, numbered, dataTable, identGrid, signatures, spacer, muted, rich, rule, logoPath, BRANDING_DIR, CONTENT_W, FILL, MUTED };
+// Executa a geração da placa em processo filho (isolamento de memória) e devolve o PDF
+function renderSignIsolated(job, { timeoutMs = 180000 } = {}) {
+  const { fork } = require('child_process'); const os = require('os'); const fs = require('fs');
+  const out = path.join(os.tmpdir(), `placa-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`);
+  return new Promise((resolve, reject) => {
+    const child = fork(path.join(__dirname, 'sign-worker.js'), [], { execArgv: ['--disable-warning=ExperimentalWarning'], env: process.env, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+    let settled = false;
+    const done = (err, buf) => { if (settled) return; settled = true; clearTimeout(timer); try { child.kill(); } catch { /* já encerrado */ } fs.rm(out, { force: true }, () => {}); if (err) reject(err); else resolve(buf); };
+    const timer = setTimeout(() => done(Object.assign(new Error('A geração do PDF demorou demais. Tente uma foto menor ou em JPEG.'), { status: 503 })), timeoutMs);
+    child.on('message', (m) => {
+      if (m && m.ok) { try { done(null, fs.readFileSync(out)); } catch (e) { done(e); } }
+      else done(Object.assign(new Error(`Não foi possível gerar o PDF: ${(m && m.error) || 'erro desconhecido'}.`), { status: 500, expose: true }));
+    });
+    child.on('exit', (code, sig) => done(Object.assign(new Error('O servidor ficou sem memória ao processar a foto da placa. Envie a imagem em JPEG (qualidade máxima) ou em PNG sem transparência e tente de novo.'), { status: 503, expose: true, detail: `código ${code} ${sig || ''}` })));
+    child.on('error', (e) => done(e));
+    child.send({ ...job, out });
+  });
+}
+async function sendBuffer(res, buf, filename, download) {
+  const safe = String(filename || 'documento.pdf').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim();
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Length', buf.length);
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${safe.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]/g, '')}"; filename*=UTF-8''${encodeURIComponent(safe)}`);
+  res.end(buf);
+}
+module.exports = { renderSignIsolated, sendBuffer, signDoc, build, render, send, tokensToContent, sectionTitle, subTitle, para, note, bullet, numbered, dataTable, identGrid, signatures, spacer, muted, rich, rule, logoPath, BRANDING_DIR, CONTENT_W, FILL, MUTED };

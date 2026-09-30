@@ -100,7 +100,7 @@ function seedDefaults() {
     const defaults = {
       office_name: 'Carla Nogueira & Irineu Junior',
       office_tagline: 'Arquitetura | Interiores',
-      opening_balance: '0', opening_balance_date: new Date().toISOString().slice(0, 10),
+      opening_balance: '0', opening_balance_date: (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })(), // data local (não UTC)
       alert_days_payments: '5', alert_days_tasks: '2', alert_days_deliveries: '7', alert_days_documents: '30',
       alert_days_proposals: '5', recurring_months_ahead: '3', backup_keep: '30',
       office_doc: '', office_address: '', office_phone: '', office_email: '',

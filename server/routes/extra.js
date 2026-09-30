@@ -239,8 +239,8 @@ function photoFor(s, inlineData) {
   const buf = fs.readFileSync(full); const sz = sign.imageSize(buf); if (!sz) return null;
   // PDF: arquivo original completo (sem miniatura); só a marca de orientação EXIF é neutralizada e aplicada no desenho
   const oriented = inlineData && sz.mime === 'image/jpeg' && sz.orientation > 1;
-  const data = oriented ? sign.resetOrientation(buf) : buf;
-  return { ...sz, oriented, doc: d, href: inlineData ? `data:${sz.mime};base64,${data.toString('base64')}` : `/api/files/${d.id}?inline=1` };
+  // PDF: o SVG só referencia "cnij-foto"; o arquivo original vai em binário para o processo gerador (ver pdf.signDoc)
+  return { ...sz, oriented, doc: d, href: inlineData ? 'cnij-foto' : `/api/files/${d.id}?inline=1` };
 }
 function signOut(s) {
   const data = J(s.data, {}) || {};
@@ -341,11 +341,13 @@ router.get('/pdf/sign/:id', wrap(async (req, res) => {
   const s = signRow(req.user, Number(req.params.id));
   const data = J(s.data, {}) || {};
   if (req.query.check === '1') return res.json({ ok: true, problems: [] });
-  const img = photoFor(s, true); // arquivo original enviado (não a prévia)
+  const img = photoFor(s, true); // modo PDF: referência curta; o arquivo original é lido pelo processo gerador
   const r = sign.buildSvg({ ...s, data }, { img });
   const info = signExportInfo(s);
   const subject = `Placa de obra — tamanho final (corte) ${r.w} × ${r.h} mm${r.bleed ? `, sangria de ${r.bleed} mm por lado (página ${r.w + 2 * r.bleed} × ${r.h + 2 * r.bleed} mm)` : ', sem sangria'}. Cores em RGB, sem marcas de corte.`;
-  await pdf.send(res, pdf.signDoc(r.svg, r.w, r.h, s.title, { bleed: r.bleed, subject }), signFileName(s, info), req.query.download === '1');
+  const buf = await pdf.renderSignIsolated({ svg: r.svg, w: r.w, h: r.h, title: s.title, bleed: r.bleed, subject,
+    photo: img ? { path: path.join(UPLOAD_DIR, img.doc.file_path), resetOrientation: img.mime === 'image/jpeg' && img.orientation > 1 } : null });
+  await pdf.sendBuffer(res, buf, signFileName(s, info), req.query.download === '1');
 }));
 
 // ====================================================================

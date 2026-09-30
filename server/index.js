@@ -92,7 +92,7 @@ app.use((err, req, res, next) => {
   if (err.code === 'LIMIT_FILE_SIZE') { status = 400; msg = 'Arquivo muito grande.'; }
   if (/UNIQUE constraint/i.test(msg || '')) { status = 400; msg = 'Registro duplicado.'; }
   if (/FOREIGN KEY constraint/i.test(msg || '')) { status = 400; msg = 'Existem registros vinculados. Arquive em vez de excluir.'; }
-  if (status >= 500) { console.error(err); msg = 'Erro interno. Tente novamente.'; }
+  if (status >= 500) { console.error(err.detail ? `${err.message} (${err.detail})` : err); if (!err.expose) msg = 'Erro interno. Tente novamente.'; }
   res.status(status).json({ error: msg, ...(err.needClient ? { need_client: true } : {}) });
 });
 
