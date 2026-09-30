@@ -21,7 +21,7 @@ router.get('/meta', wrap((req, res) => {
     office: { name: getSetting('office_name'), tagline: getSetting('office_tagline') },
     lists, options: opts, resources: metaFor(req.user),
     users: all("SELECT id, name, color, role, job_title FROM users WHERE active = 1 AND role <> 'cliente' ORDER BY name"),
-    today: today(),
+    today: today(), max_upload_mb: Number(process.env.MAX_UPLOAD_MB) || 200,
   });
 }));
 

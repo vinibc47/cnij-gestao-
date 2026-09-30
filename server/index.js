@@ -89,7 +89,7 @@ app.get(/^\/(?!api).*/, (req, res) => res.sendFile(path.join(PUBLIC, 'index.html
 app.use((err, req, res, next) => {
   let status = err.status || 500;
   let msg = err.message;
-  if (err.code === 'LIMIT_FILE_SIZE') { status = 400; msg = 'Arquivo muito grande.'; }
+  if (err.code === 'LIMIT_FILE_SIZE') { status = 413; msg = `Arquivo grande demais (limite de ${Number(process.env.MAX_UPLOAD_MB) || 200} MB por arquivo).`; }
   if (/UNIQUE constraint/i.test(msg || '')) { status = 400; msg = 'Registro duplicado.'; }
   if (/FOREIGN KEY constraint/i.test(msg || '')) { status = 400; msg = 'Existem registros vinculados. Arquive em vez de excluir.'; }
   if (status >= 500) { console.error(err.detail ? `${err.message} (${err.detail})` : err); if (!err.expose) msg = 'Erro interno. Tente novamente.'; }
@@ -99,6 +99,7 @@ app.use((err, req, res, next) => {
 const PORT = Number(process.env.PORT) || 3000;
 if (require.main === module) {
   automation.start();
-  app.listen(PORT, () => console.log(`\n  CN&IJ Gestão rodando em http://localhost:${PORT}\n`));
+  const server = app.listen(PORT, () => console.log(`\n  CN&IJ Gestão rodando em http://localhost:${PORT}\n`));
+  server.requestTimeout = 30 * 60 * 1000; // envio de arquivos grandes em conexões lentas (padrão do Node: 5 min)
 }
 module.exports = app;

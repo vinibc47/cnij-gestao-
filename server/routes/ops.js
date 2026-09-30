@@ -299,7 +299,7 @@ const upload = multer({
     destination: (req, file, cb) => { const d = path.join(UPLOAD_DIR, new Date().toISOString().slice(0, 7)); fs.mkdirSync(d, { recursive: true }); cb(null, d); },
     filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString('hex') + path.extname(file.originalname).toLowerCase().slice(0, 10)),
   }),
-  limits: { fileSize: (Number(process.env.MAX_UPLOAD_MB) || 30) * 1024 * 1024, files: 20 },
+  limits: { fileSize: (Number(process.env.MAX_UPLOAD_MB) || 200) * 1024 * 1024, files: 20 },
   fileFilter: (req, file, cb) => (BLOCKED.test(file.originalname) ? cb(new HttpError(400, 'Tipo de arquivo não permitido.')) : cb(null, true)),
 });
 const ATTACHABLE = ['tasks', 'projects', 'project_phases', 'works', 'work_logs', 'expenses', 'incomes', 'contracts', 'proposals', 'quotes', 'suppliers', 'clients', 'events', 'site_signs', 'meeting_minutes', 'receipts'];

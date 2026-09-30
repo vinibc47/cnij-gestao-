@@ -50,17 +50,20 @@ APP_URL=https://$DOMAIN
 COOKIE_SECURE=1
 TRUST_PROXY=1
 TZ=America/Campo_Grande
-MAX_UPLOAD_MB=30
+MAX_UPLOAD_MB=200
 ENV
 else
   sed -i "s|^APP_URL=.*|APP_URL=https://$DOMAIN|" $BASE/.env
+  # limite antigo de 30 MB por arquivo passa para 200 MB (apresentações em PDF costumam ser maiores)
+  if grep -q '^MAX_UPLOAD_MB=30$' $BASE/.env; then sed -i 's|^MAX_UPLOAD_MB=30$|MAX_UPLOAD_MB=200|' $BASE/.env; fi
+  grep -q '^MAX_UPLOAD_MB=' $BASE/.env || echo 'MAX_UPLOAD_MB=200' >> $BASE/.env
 fi
 
 cat > $BASE/Caddyfile <<CADDY
 $SITES {
   encode gzip
   request_body {
-    max_size 40MB
+    max_size 1GB
   }
   reverse_proxy app:3000
 }
