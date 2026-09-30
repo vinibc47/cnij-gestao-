@@ -9,13 +9,16 @@ export async function api(path, { method = 'GET', body, raw } = {}) {
   const opt = { method, headers: { 'X-Requested-With': 'cnij' }, credentials: 'same-origin' };
   if (body instanceof FormData) opt.body = body;
   else if (body !== undefined) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
-  const r = await fetch('/api' + path, opt);
+  let r;
+  try { r = await fetch('/api' + path, opt); }
+  catch { throw Object.assign(new Error('Sem conexão com o servidor. Verifique a internet e tente de novo.'), { status: 0 }); }
   if (raw) return r;
   let data = null;
   try { data = await r.json(); } catch { data = null; }
   if (!r.ok) {
     if (r.status === 401 && !path.startsWith('/auth')) { window.dispatchEvent(new CustomEvent('auth:expired')); }
-    const e = new Error((data && data.error) || 'Falha na comunicação com o servidor.'); e.status = r.status; e.data = data; throw e;
+    const byStatus = { 413: `Arquivo grande demais para o servidor (limite de ${(S.meta && S.meta.max_upload_mb) || 200} MB por arquivo).`, 502: 'O servidor está reiniciando ou não respondeu. Aguarde alguns segundos e tente de novo.', 503: 'O servidor está ocupado ou reiniciando. Tente de novo em instantes.', 504: 'O servidor demorou demais para responder. Tente de novo.' };
+    const e = new Error((data && data.error) || byStatus[r.status] || `Falha na comunicação com o servidor (erro ${r.status}).`); e.status = r.status; e.data = data; throw e;
   }
   return data;
 }
@@ -463,6 +466,9 @@ export const csvMoney = (n) => (n === null || n === undefined ? '' : Number(n).t
 // ------------------------------ Anexos, checklist, comentários ------------------------------
 export const fileUrl = (d, inline) => `/api/files/${d.id}${inline ? '?inline=1' : ''}`;
 export function uploadFiles(files, meta = {}) {
+  const max = ((S.meta && S.meta.max_upload_mb) || 200) * 1024 * 1024;
+  const big = Array.from(files).filter((f) => f.size > max);
+  if (big.length) return Promise.reject(new Error(`${big.map((f) => `“${f.name}” (${bytes(f.size)})`).join(', ')} passa do limite de ${bytes(max)} por arquivo. Reduza o PDF (exportar com imagens comprimidas) ou divida em partes.`));
   const fd = new FormData();
   Array.from(files).forEach((f) => fd.append('files', f));
   Object.entries(meta).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') fd.append(k, v); });
