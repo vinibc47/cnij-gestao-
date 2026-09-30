@@ -184,7 +184,7 @@ async function exportSign(id, btn, { onReplace } = {}) {
     const r = await fetch(`/api/pdf/sign/${id}?download=1`, { credentials: 'same-origin', headers: { 'X-Requested-With': 'cnij' } });
     const type = r.headers.get('Content-Type') || '';
     if (!r.ok || !type.includes('application/pdf')) {
-      let msg = `Não foi possível gerar o PDF (erro ${r.status}).`;
+      let msg = [502, 504].includes(r.status) ? `O servidor não respondeu durante a geração (erro ${r.status}). Tente de novo em alguns segundos; se repetir, envie a foto em JPEG.` : `Não foi possível gerar o PDF (erro ${r.status}).`;
       try { const j = await r.json(); if (j && j.error) msg = j.error; } catch { /* resposta não é JSON */ }
       throw new Error(msg);
     }
