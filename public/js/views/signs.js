@@ -20,7 +20,7 @@ export default async function (ctx) {
     onRow: (s) => ctx.go(`#/placas/${s.id}`),
     actions: (s, reload) => [
       { label: 'Editar', icon: 'edit', fn: () => ctx.go(`#/placas/${s.id}`) },
-      { label: 'Exportar PDF', icon: 'print', fn: () => openPdf(`/pdf/sign/${s.id}`) },
+      { label: 'Baixar PDF', icon: 'download', fn: () => exportSign(s.id, null) },
       { label: s.archived ? 'Restaurar' : 'Arquivar', icon: s.archived ? 'refresh' : 'archive', fn: async () => { await archiveRow('site_signs', s, s.archived ? 0 : 1); reload(); } },
       '-', { label: 'Excluir definitivamente', icon: 'trash', danger: true, fn: async () => { if (await deleteRow('site_signs', s, s.title)) reload(); } },
     ],
@@ -60,6 +60,8 @@ async function editor(ctx, id) {
           <div class="field"><label>Tamanho</label><select data-st="size">${L('SIGN_SIZES').map((x) => html`<option value="${x.value}" ${x.value === st.size ? 'selected' : ''}>${x.label}</option>`)}</select></div>
           <div class="field" data-orient-f><label>Orientação</label><div class="btn-group" data-orient><button type="button" data-v="retrato">Retrato</button><button type="button" data-v="paisagem">Paisagem</button></div></div>
           <div class="field"><label>Fundo</label><div class="btn-group" data-theme><button type="button" data-v="escuro">Escuro</button><button type="button" data-v="claro">Claro</button></div></div>
+          <div class="field"><label>Sangria (mm por lado)</label><input type="number" min="0" max="20" step="0.5" inputmode="decimal" data-bleed value="${d.bleed_mm || 0}">
+            <span class="hint">Use o valor pedido pela gráfica (0 = sem sangria). O tamanho de corte não muda; só o fundo avança além do corte. Não são adicionadas marcas de corte.</span></div>
         </form></section>
         <section class="card"><div class="card-head"><h3>Obra</h3></div><form class="form-grid" onsubmit="return false" data-obra>
           <div class="field wide"><label>Serviço (linha de destaque)</label><input name="service_line" value="${d.service_line || ''}" placeholder="Ex.: Projeto arquitetônico e de interiores"></div>
@@ -111,11 +113,12 @@ async function editor(ctx, id) {
   orientVis();
   root.querySelectorAll('[data-st]').forEach((i) => i.addEventListener('input', () => { const k = i.dataset.st; st[k] = i.type === 'range' ? Number(i.value) : i.value; if (k === 'size') { if (!SERIES.includes(st.size)) st.orientation = 'paisagem'; orientVis(); seg('[data-orient]', 'orientation'); } changed(); }));
   q('[data-obra]').addEventListener('input', () => changed());
+  q('[data-bleed]').addEventListener('input', () => tracker.mark());
 
   const payload = () => {
     const o = {}; q('[data-obra]').querySelectorAll('[name]').forEach((i) => { o[i.name] = i.value.trim(); });
     return { title: q('[name=title]').value.trim() || 'Placa de obra', client_id: cli.combo.get() || null, project_id: prj.combo.get() || null, ...st,
-      data: { ...o, people: people.rows.get(), extra_fields: extra.rows.get().filter((x) => x.label || x.value), handles: handles.rows.get().filter((x) => x.handle) } };
+      data: { ...o, bleed_mm: Math.max(0, Math.min(20, Number(String(q('[data-bleed]').value).replace(',', '.')) || 0)), people: people.rows.get(), extra_fields: extra.rows.get().filter((x) => x.label || x.value), handles: handles.rows.get().filter((x) => x.handle) } };
   };
   const showPrev = (r) => {
     q('[data-prev]').innerHTML = r.svg;
@@ -124,8 +127,8 @@ async function editor(ctx, id) {
     q('[data-dimlabel]').textContent = SERIES.includes(st.size) ? `${st.size} · ${st.orientation} · ${wmm} × ${hmm} mm` : sizeLabel(st.size);
     q('[data-scale]').textContent = `proporção ${(wmm / hmm).toFixed(2).replace('.', ',')} : 1`;
     const res = q('[data-res]');
-    res.innerHTML = r.ppi ? toHTML(r.low_res ? html`<div class="callout warn"><b>Resolução baixa para este tamanho:</b> ${Math.round(r.ppi)} ppi na impressão (recomendado a partir de ${r.min_ppi} ppi). A foto pode sair borrada; envie uma imagem maior.</div>`
-      : html`<div class="small success-text">${icon('check', 'sm')} Resolução adequada: ${Math.round(r.ppi)} ppi na impressão.</div>`) : '';
+    res.innerHTML = r.ppi ? toHTML(r.low_res ? html`<div class="callout warn"><b>Resolução efetiva da foto: ${Math.round(r.ppi)} ppi</b> no tamanho em que ela ocupa a placa (referência de alta qualidade: ${r.min_ppi} ppi). Você pode exportar assim mesmo ou enviar um arquivo maior.</div>`
+      : html`<div class="small success-text">${icon('check', 'sm')} Resolução efetiva da foto: ${Math.round(r.ppi)} ppi (alta qualidade).</div>`) : '';
   };
   showPrev({ svg: s.svg, dims: s.dims, ppi: s.ppi, low_res: s.low_res, min_ppi: s.min_ppi });
   const refresh = debounce(async () => { try { showPrev(await api.post(`/signs/${id}/preview`, payload())); } catch (e) { fail(e); } }, 350);
@@ -135,7 +138,10 @@ async function editor(ctx, id) {
     try { await api.put(`/signs/${id}`, payload()); tracker.clean(); if (!quiet) { toast('Placa salva.'); editor(ctx, id); } return true; } catch (e) { fail(e); return false; }
   };
   q('[data-save]').onclick = () => save();
-  q('[data-pdf]').onclick = () => openPdf(`/pdf/sign/${id}`, { dirty: tracker.dirty, save: () => save(true) });
+  q('[data-pdf]').onclick = async (e) => {
+    if (tracker.dirty && !(await save(true))) return; // o PDF sai sempre com o que está na prévia
+    exportSign(id, e.currentTarget, { onReplace: () => q('[data-upload]').click() });
+  };
   const file = q('[data-file]');
   q('[data-upload]').onclick = () => file.click();
   file.onchange = async () => {
@@ -154,4 +160,45 @@ async function editor(ctx, id) {
     { label: s.archived ? 'Restaurar' : 'Arquivar', icon: s.archived ? 'refresh' : 'archive', fn: async () => { await archiveRow('site_signs', s, s.archived ? 0 : 1); ctx.go('#/placas'); } },
     '-', { label: 'Excluir definitivamente', icon: 'trash', danger: true, fn: async () => { if (await deleteRow('site_signs', s, s.title)) ctx.go('#/placas'); } },
   ].filter(Boolean));
+}
+
+// Exporta a placa: confere medidas e resolução, gera o PDF no servidor e baixa o arquivo (sem abrir aba nem impressão)
+async function exportSign(id, btn, { onReplace } = {}) {
+  let info;
+  try { info = await api.get(`/signs/${id}/export-info`); } catch (e) { return fail(e); }
+  const mm = (v) => String(v).replace('.', ',');
+  const dimTxt = `${mm(info.trim_mm.w)} × ${mm(info.trim_mm.h)} mm${info.bleed_mm ? ` + sangria de ${mm(info.bleed_mm)} mm (arquivo ${mm(info.page_mm.w)} × ${mm(info.page_mm.h)} mm)` : ''}`;
+  if (!info.photo || info.below_ref) {
+    const go = await new Promise((res) => modal({ title: info.photo ? 'Resolução da foto' : 'Placa sem foto',
+      body: info.photo ? html`<p style="margin-top:0">A foto <b>${info.photo.name}</b> (${info.photo.w} × ${info.photo.h} px) terá <b>${info.photo.ppi} ppi efetivos</b> no tamanho que ocupa na placa de ${dimTxt}.</p>
+        <p class="small muted">Referência de alta qualidade: ${info.ref_ppi} ppi. O arquivo não é ampliado artificialmente: a foto vai com os pixels originais. Textos, logo, linhas e QR Code são vetoriais e ficam nítidos em qualquer tamanho.</p>`
+        : html`<p class="muted" style="margin-top:0">A placa será exportada sem foto ou render.</p>`,
+      actions: [{ label: 'Cancelar', value: 'cancel' }, ...(onReplace && info.photo ? [{ label: 'Substituir imagem', value: 'replace' }] : []), { label: 'Continuar e baixar', primary: true, value: 'go' }], onClose: (v) => res(v || 'cancel') }));
+    if (go === 'replace') return onReplace();
+    if (go !== 'go') return;
+  }
+  const label = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Gerando PDF…'; }
+  if (!btn) toast('Gerando PDF da placa…');
+  try {
+    const r = await fetch(`/api/pdf/sign/${id}?download=1`, { credentials: 'same-origin', headers: { 'X-Requested-With': 'cnij' } });
+    const type = r.headers.get('Content-Type') || '';
+    if (!r.ok || !type.includes('application/pdf')) {
+      let msg = `Não foi possível gerar o PDF (erro ${r.status}).`;
+      try { const j = await r.json(); if (j && j.error) msg = j.error; } catch { /* resposta não é JSON */ }
+      throw new Error(msg);
+    }
+    const blob = await r.blob();
+    const head = await blob.slice(0, 5).text();
+    if (head !== '%PDF-') throw new Error('O servidor não devolveu um PDF válido.');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = info.file_name || 'placa.pdf';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    toast(`PDF baixado: ${a.download} — ${dimTxt}.`, { ms: 6000 });
+  } catch (e) {
+    toast(`Falha ao gerar o PDF: ${e.message || e}`, { error: true, ms: 10000 });
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = label; }
+  }
 }

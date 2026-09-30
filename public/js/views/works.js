@@ -1,4 +1,4 @@
-import { S, api, html, el, toHTML, icon, money, date, badge, label, progress, openForm, drawer, dropzone, fileRow, fileUrl, toast, fail, menu, today, table, deleteRow, can, $$ } from '../lib.js';
+import { S, api, html, el, toHTML, icon, money, date, badge, label, progress, openForm, drawer, dropzone, fileRow, fileUrl, toast, fail, menu, today, table, deleteRow, can, $$, archiveRow } from '../lib.js';
 import { listPage, rowActions } from './common.js';
 import { quotesPanel } from './quotes.js';
 import { newEntry, entryDrawer } from './finance.js';
@@ -171,7 +171,7 @@ const T = {
       <div class="card"><div class="field mb-16"><label>Categoria</label><select data-cat>${['Notas fiscais', 'Orçamentos', 'Alvarás e licenças', 'Documentos de condomínio', 'ART', 'RRT', 'Outros'].map((c) => html`<option>${c}</option>`)}</select></div><div data-drop></div></div></div>`);
     const l = box.querySelector('[data-l]');
     if (!d.documents.length) l.innerHTML = '<div class="muted small">Nenhum documento.</div>';
-    d.documents.forEach((doc) => { const r = fileRow(doc, { onDelete: async (x) => { if (await deleteRow('documents', x, x.title)) reload(); } }); addVisToggle(r, doc, reload); l.appendChild(r); });
+    d.documents.forEach((doc) => { const r = fileRow(doc, { onArchive: async (x) => { await archiveRow('documents', x, 1); reload(); } }); addVisToggle(r, doc, reload); l.appendChild(r); });
     box.querySelector('[data-drop]').appendChild(dropzone(() => ({ work_id: d.work.id, project_id: d.work.project_id, category: box.querySelector('[data-cat]').value }), reload));
     body.appendChild(box);
   },

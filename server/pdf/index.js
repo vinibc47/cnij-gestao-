@@ -205,7 +205,9 @@ function build({ title, purpose, ident = [], content = [], issuedAt, draft = fal
 function render(docDef) {
   return new Promise((resolve, reject) => {
     try {
-      const d = printer.createPdfKitDocument(docDef);
+      const boxes = docDef._boxes; if (boxes) delete docDef._boxes;
+      const d = printer.createPdfKitDocument(docDef, boxes ? { bufferPages: true } : {});
+      if (boxes) { const r = d.bufferedPageRange(); for (let i = r.start; i < r.start + r.count; i++) { d.switchToPage(i); d.page.dictionary.data.TrimBox = boxes.trim; d.page.dictionary.data.BleedBox = boxes.bleed; } }
       const chunks = []; d.on('data', (c) => chunks.push(c)); d.on('end', () => resolve(Buffer.concat(chunks))); d.on('error', reject); d.end();
     } catch (e) { reject(e); }
   });
@@ -221,10 +223,72 @@ async function send(res, docDef, filename, download) {
 }
 
 // Placa de obra: página no tamanho físico escolhido, arte vetorial (SVG) ocupando a página inteira
-function signDoc(svg, wmm, hmm, title) {
-  const W = wmm * 72 / 25.4; const H = hmm * 72 / 25.4;
-  return { pageSize: { width: W, height: H }, pageMargins: [0, 0, 0, 0], info: { title, author: docs.office().name, creator: 'CN&IJ Gestão' },
-    content: [{ svg, width: W, height: H, font: 'Inter' }], defaultStyle: { font: 'Inter' } };
+// Placa: uma página no tamanho físico (corte + sangria), sem margens; tudo vetorial exceto a foto.
+function signDoc(svg, wmm, hmm, title, { bleed = 0, subject = '' } = {}) {
+  const pt = (mm) => (mm * 72) / 25.4;
+  const W = pt(wmm + 2 * bleed); const H = pt(hmm + 2 * bleed);
+  return { pageSize: { width: W, height: H }, pageMargins: [0, 0, 0, 0],
+    info: { title, subject, author: docs.office().name, creator: 'CN&IJ Gestão', producer: 'CN&IJ Gestão' },
+    content: [{ svg, width: W, height: H, font: 'Inter' }], defaultStyle: { font: 'Inter' },
+    // caixas do PDF: TrimBox = tamanho final de corte; BleedBox = corte + sangria
+    _boxes: { trim: [pt(bleed), pt(bleed), W - pt(bleed), H - pt(bleed)], bleed: [0, 0, W, H] } };
 }
 
+// Perfis de cor: mantém o perfil ICC embutido na foto (JPEG APP2 / PNG iCCP) como espaço de cor ICCBased,
+// em vez de descartá-lo; sem perfil, a imagem continua em RGB do dispositivo (nada é convertido).
+function iccFrom(buf) {
+  try {
+    if (buf[0] === 0xff && buf[1] === 0xd8) {
+      const parts = []; let i = 2;
+      while (i + 4 < buf.length && buf[i] === 0xff) {
+        const mk = buf[i + 1]; const len = buf.readUInt16BE(i + 2);
+        if (mk === 0xe2 && buf.slice(i + 4, i + 16).toString('latin1') === 'ICC_PROFILE\0') parts.push({ n: buf[i + 16], data: buf.slice(i + 18, i + 2 + len) });
+        if (mk === 0xda) break; i += 2 + len;
+      }
+      return parts.length ? Buffer.concat(parts.sort((a, b) => a.n - b.n).map((p) => p.data)) : null;
+    }
+    if (buf.slice(1, 4).toString('latin1') === 'PNG') {
+      let i = 8;
+      while (i + 8 < buf.length) {
+        const len = buf.readUInt32BE(i); const type = buf.slice(i + 4, i + 8).toString('latin1');
+        if (type === 'iCCP') { const c = buf.slice(i + 8, i + 8 + len); const z = c.indexOf(0); return require('zlib').inflateSync(c.slice(z + 2)); }
+        if (type === 'IDAT') break; i += 12 + len;
+      }
+    }
+  } catch { /* sem perfil legível */ }
+  return null;
+}
+{
+  const PDFDocument = require('@foliojs-fork/pdfkit');
+  const orig = PDFDocument.prototype.openImage;
+  PDFDocument.prototype.openImage = function (src) {
+    const img = orig.call(this, src);
+    if (img && !img._iccWrapped) {
+      img._iccWrapped = true;
+      const buf = Buffer.isBuffer(src) ? src : typeof src === 'string' && src.startsWith('data:') ? Buffer.from(src.slice(src.indexOf(',') + 1), 'base64') : null;
+      const icc = buf && iccFrom(buf);
+      if (icc) {
+        const embed = img.embed.bind(img);
+        img.embed = (doc) => {
+          const ref = doc.ref; let done = false;
+          doc.ref = (data) => {
+            // 1ª imagem criada = a foto (máscaras de transparência vêm depois); JPEG define a cor na criação, PNG logo em seguida
+            if (!done && data && data.Subtype === 'Image') {
+              done = true; let cs = data.ColorSpace;
+              const n = icc.length > 20 ? icc.slice(16, 20).toString('latin1') : 'RGB ';
+              const alt = n === 'GRAY' ? 'DeviceGray' : 'DeviceRGB';
+              // o perfil é gravado antes da imagem (nunca durante a escrita dela)
+              const iccRef = ref.call(doc, { N: alt === 'DeviceRGB' ? 3 : 1, Alternate: alt }); iccRef.end(icc);
+              const wrapCs = (v) => (v === alt ? ['ICCBased', iccRef] : v);
+              Object.defineProperty(data, 'ColorSpace', { enumerable: true, configurable: true, get: () => (cs === undefined ? undefined : wrapCs(cs)), set: (v) => { cs = v; } });
+            }
+            return ref.call(doc, data);
+          };
+          try { return embed(doc); } finally { doc.ref = ref; }
+        };
+      }
+    }
+    return img;
+  };
+}
 module.exports = { signDoc, build, render, send, tokensToContent, sectionTitle, subTitle, para, note, bullet, numbered, dataTable, identGrid, signatures, spacer, muted, rich, rule, logoPath, BRANDING_DIR, CONTENT_W, FILL, MUTED };

@@ -237,7 +237,10 @@ function photoFor(s, inlineData) {
   const d = get('SELECT * FROM documents WHERE id = ?', s.photo_doc_id); if (!d || !d.file_path) return null;
   const full = path.join(UPLOAD_DIR, d.file_path); if (!full.startsWith(UPLOAD_DIR) || !fs.existsSync(full)) return null;
   const buf = fs.readFileSync(full); const sz = sign.imageSize(buf); if (!sz) return null;
-  return { ...sz, doc: d, href: inlineData ? `data:${sz.mime};base64,${buf.toString('base64')}` : `/api/files/${d.id}?inline=1` };
+  // PDF: arquivo original completo (sem miniatura); só a marca de orientação EXIF é neutralizada e aplicada no desenho
+  const oriented = inlineData && sz.mime === 'image/jpeg' && sz.orientation > 1;
+  const data = oriented ? sign.resetOrientation(buf) : buf;
+  return { ...sz, oriented, doc: d, href: inlineData ? `data:${sz.mime};base64,${data.toString('base64')}` : `/api/files/${d.id}?inline=1` };
 }
 function signOut(s) {
   const data = J(s.data, {}) || {};
@@ -287,6 +290,7 @@ function readSign(b) {
       people: (x.people || []).slice(0, 4).map((p) => ({ nome: clean(p.nome), funcao: clean(p.funcao), registro_label: clean(p.registro_label, 20), registro: clean(p.registro, 60), rrt_label: clean(p.rrt_label, 20), rrt: clean(p.rrt, 60) })),
       extra_fields: (x.extra_fields || []).slice(0, 4).map((f) => ({ label: clean(f.label, 40), value: clean(f.value, 200) })),
       handles: (x.handles || []).slice(0, 4).map((h) => ({ handle: clean(h.handle, 60), desc: clean(h.desc, 80) })),
+      bleed_mm: Math.max(0, Math.min(20, num(x.bleed_mm) || 0)),
     });
   }
   if (d.project_id && d.client_id) { const p = get('SELECT client_id FROM projects WHERE id = ?', d.project_id); if (p && p.client_id !== d.client_id) throw new HttpError(400, 'O projeto selecionado não pertence a este cliente.'); }
@@ -320,14 +324,28 @@ router.post('/signs/:id/preview', wrap((req, res) => {
   const r = sign.buildSvg(merged, { img, preview: true });
   res.json({ svg: r.svg, ppi: r.ppi, low_res: r.lowRes, min_ppi: r.minPpi, dims: { w: r.w, h: r.h } });
 }));
+// Conferência antes da exportação: medidas finais, sangria e resolução efetiva da foto
+function signExportInfo(s) {
+  const data = J(s.data, {}) || {};
+  const img = photoFor(s, false);
+  const r = sign.buildSvg({ ...s, data }, { img });
+  const D = sign.dims(s.size, s.orientation);
+  const problems = [];
+  if (!img) problems.push('A placa está sem foto ou render.');
+  return { size: s.size, label: D.label, orientation: D.series ? s.orientation : 'paisagem', trim_mm: { w: r.w, h: r.h }, bleed_mm: r.bleed, page_mm: { w: r.w + 2 * r.bleed, h: r.h + 2 * r.bleed },
+    photo: img ? { name: img.doc.file_name, w: img.w, h: img.h, ppi: r.ppi } : null, ref_ppi: sign.REF_PPI, below_ref: r.ppi !== null && r.ppi < sign.REF_PPI, problems };
+}
+const signFileName = (s, i) => fileName(s.title, `${i.trim_mm.w}x${i.trim_mm.h}mm${i.bleed_mm ? ` sangria ${String(i.bleed_mm).replace('.', ',')}mm` : ''}`);
+router.get('/signs/:id/export-info', wrap((req, res) => { const s = signRow(req.user, Number(req.params.id)); const i = signExportInfo(s); res.json({ ...i, file_name: signFileName(s, i) }); }));
 router.get('/pdf/sign/:id', wrap(async (req, res) => {
   const s = signRow(req.user, Number(req.params.id));
   const data = J(s.data, {}) || {};
   if (req.query.check === '1') return res.json({ ok: true, problems: [] });
-  const img = photoFor(s, true);
+  const img = photoFor(s, true); // arquivo original enviado (não a prévia)
   const r = sign.buildSvg({ ...s, data }, { img });
-  const D = sign.dims(s.size, s.orientation);
-  await pdf.send(res, pdf.signDoc(r.svg, r.w, r.h, s.title), fileName(s.title, `${D.label}${D.series ? ' ' + s.orientation : ''}`), req.query.download === '1');
+  const info = signExportInfo(s);
+  const subject = `Placa de obra — tamanho final (corte) ${r.w} × ${r.h} mm${r.bleed ? `, sangria de ${r.bleed} mm por lado (página ${r.w + 2 * r.bleed} × ${r.h + 2 * r.bleed} mm)` : ', sem sangria'}. Cores em RGB, sem marcas de corte.`;
+  await pdf.send(res, pdf.signDoc(r.svg, r.w, r.h, s.title, { bleed: r.bleed, subject }), signFileName(s, info), req.query.download === '1');
 }));
 
 // ====================================================================

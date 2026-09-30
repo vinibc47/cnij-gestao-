@@ -660,3 +660,5 @@ table.cmp-table td { vertical-align: top; padding: 10px 14px; border-bottom: 1px
   .svc-row > input, .svc-row > .money-input { grid-column: 1 / -1; }
 }
 .sign-ed > * { min-width: 0; }
+.spin { display: inline-block; width: 13px; height: 13px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; }
+@keyframes spin { to { transform: rotate(360deg); } }

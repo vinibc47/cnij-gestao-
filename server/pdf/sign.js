@@ -74,6 +74,41 @@ function qr(x, y, size, theme) {
 }
 const igIcon = (x, y, s, color) => `<g fill="none" stroke="${color}" stroke-width="${n2(s * 0.09)}"><rect x="${n2(x)}" y="${n2(y)}" width="${n2(s)}" height="${n2(s)}" rx="${n2(s * 0.28)}"/><circle cx="${n2(x + s / 2)}" cy="${n2(y + s / 2)}" r="${n2(s * 0.22)}"/></g><circle cx="${n2(x + s * 0.76)}" cy="${n2(y + s * 0.24)}" r="${n2(s * 0.055)}" fill="${color}"/>`;
 
+// Orientação EXIF (1 a 8) de um JPEG
+function jpegOrientation(buf) {
+  let i = 2;
+  while (i + 4 < buf.length && buf[i] === 0xff) {
+    const mk = buf[i + 1]; const len = buf.readUInt16BE(i + 2);
+    if (mk === 0xe1 && buf.slice(i + 4, i + 10).toString('latin1') === 'Exif\0\0') {
+      const t = i + 10; const le = buf.slice(t, t + 2).toString('latin1') === 'II';
+      const r16 = (o) => (le ? buf.readUInt16LE(o) : buf.readUInt16BE(o)); const r32 = (o) => (le ? buf.readUInt32LE(o) : buf.readUInt32BE(o));
+      const ifd = t + r32(t + 4); const n = r16(ifd);
+      for (let k = 0; k < n; k++) { const e = ifd + 2 + k * 12; if (r16(e) === 0x0112) return r16(e + 8) || 1; }
+      return 1;
+    }
+    if (mk === 0xda) break;
+    i += 2 + len;
+  }
+  return 1;
+}
+// Cópia do JPEG com a orientação EXIF zerada (=1): no PDF a rotação é aplicada pelo próprio desenho,
+// garantindo o mesmo enquadramento da prévia sem reprocessar (nem recomprimir) a foto
+function resetOrientation(buf) {
+  const out = Buffer.from(buf); let i = 2;
+  while (i + 4 < out.length && out[i] === 0xff) {
+    const mk = out[i + 1]; const len = out.readUInt16BE(i + 2);
+    if (mk === 0xe1 && out.slice(i + 4, i + 10).toString('latin1') === 'Exif\0\0') {
+      const t = i + 10; const le = out.slice(t, t + 2).toString('latin1') === 'II';
+      const r16 = (o) => (le ? out.readUInt16LE(o) : out.readUInt16BE(o)); const r32 = (o) => (le ? out.readUInt32LE(o) : out.readUInt32BE(o));
+      const ifd = t + r32(t + 4); const n = r16(ifd);
+      for (let k = 0; k < n; k++) { const e = ifd + 2 + k * 12; if (r16(e) === 0x0112) { if (le) out.writeUInt16LE(1, e + 8); else out.writeUInt16BE(1, e + 8); } }
+      return out;
+    }
+    if (mk === 0xda) break;
+    i += 2 + len;
+  }
+  return out;
+}
 // Dimensões da imagem (PNG ou JPEG) sem dependências externas
 function imageSize(buf) {
   if (buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20), mime: 'image/png' };
@@ -82,13 +117,29 @@ function imageSize(buf) {
     while (i < buf.length) {
       if (buf[i] !== 0xff) { i++; continue; }
       const mk = buf[i + 1]; const len = buf.readUInt16BE(i + 2);
-      if (mk >= 0xc0 && mk <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(mk)) return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7), mime: 'image/jpeg' };
+      if (mk >= 0xc0 && mk <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(mk)) {
+        const h = buf.readUInt16BE(i + 5); const w = buf.readUInt16BE(i + 7); const o = jpegOrientation(buf);
+        // fotos de celular giradas pelo EXIF: largura/altura efetivas trocam (igual ao navegador e ao PDF)
+        return o >= 5 && o <= 8 ? { w: h, h: w, mime: 'image/jpeg', orientation: o } : { w, h, mime: 'image/jpeg', orientation: o };
+      }
       i += 2 + len;
     }
   }
   return null;
 }
 
+// <image> na caixa exibida. Com img.oriented (PDF), a foto vem sem a marca EXIF e a rotação é aplicada aqui.
+function imageTag(img, x, y, dw, dh) {
+  const tag = (w, h, tr) => `<image x="0" y="0" width="${n2(w)}" height="${n2(h)}" preserveAspectRatio="none" href="${img.href}" xlink:href="${img.href}" transform="${tr}"/>`;
+  const o = img.oriented ? img.orientation || 1 : 1;
+  const M = {
+    1: [dw, dh, `matrix(1 0 0 1 ${n2(x)} ${n2(y)})`], 2: [dw, dh, `matrix(-1 0 0 1 ${n2(x + dw)} ${n2(y)})`],
+    3: [dw, dh, `matrix(-1 0 0 -1 ${n2(x + dw)} ${n2(y + dh)})`], 4: [dw, dh, `matrix(1 0 0 -1 ${n2(x)} ${n2(y + dh)})`],
+    5: [dh, dw, `matrix(0 1 1 0 ${n2(x)} ${n2(y)})`], 6: [dh, dw, `matrix(0 1 -1 0 ${n2(x + dw)} ${n2(y)})`],
+    7: [dh, dw, `matrix(0 -1 -1 0 ${n2(x + dw)} ${n2(y + dh)})`], 8: [dh, dw, `matrix(0 -1 1 0 ${n2(x)} ${n2(y + dh)})`],
+  }[o] || [dw, dh, `matrix(1 0 0 1 ${n2(x)} ${n2(y)})`];
+  return tag(...M);
+}
 // Foto enquadrada (cobre a área sem distorcer; foco e zoom ajustáveis)
 function photo(box, img, { fx = 50, fy = 50, zoom = 1 }, t, id, preview) {
   if (!img) return { svg: `<rect x="${n2(box.x)}" y="${n2(box.y)}" width="${n2(box.w)}" height="${n2(box.h)}" fill="${t.panel}"/>${preview ? textBlock(box.x + box.w / 2, box.y + box.h / 2 - box.h * 0.03, ['Foto ou render do projeto'], { size: box.h * 0.04, fill: t.label, anchor: 'middle' }) : ''}`, ppi: null };
@@ -98,7 +149,7 @@ function photo(box, img, { fx = 50, fy = 50, zoom = 1 }, t, id, preview) {
   const x = box.x + (box.w - dw) * (Math.max(0, Math.min(100, fx)) / 100); const y = box.y + (box.h - dh) * (Math.max(0, Math.min(100, fy)) / 100);
   const ppi = img.w / (dw / 25.4);
   return {
-    svg: `<defs><clipPath id="${id}"><rect x="${n2(box.x)}" y="${n2(box.y)}" width="${n2(box.w)}" height="${n2(box.h)}"/></clipPath></defs><g clip-path="url(#${id})"><image x="${n2(x)}" y="${n2(y)}" width="${n2(dw)}" height="${n2(dh)}" preserveAspectRatio="none" href="${img.href}" xlink:href="${img.href}"/></g>`,
+    svg: `<defs><clipPath id="${id}"><rect x="${n2(box.x)}" y="${n2(box.y)}" width="${n2(box.w)}" height="${n2(box.h)}"/></clipPath></defs><g clip-path="url(#${id})">${imageTag(img, x, y, dw, dh)}</g>`,
     ppi: Math.round(ppi),
   };
 }
@@ -255,9 +306,13 @@ function buildSvg(sign, { img, preview = false } = {}) {
     const hxP = m + lw + gap; body += hb.draw(hxP, cy - hb.h / 2 - hsz.rowH * 0.06, t);
     const qcx = W - m - qb.w / 2; body += qb.draw(qcx, cy - qb.h / 2 + qb.above, t);
   }
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${W} ${H}" width="${preview ? '100%' : W + 'mm'}" ${preview ? '' : `height="${H}mm"`}><rect width="${W}" height="${H}" fill="${t.bg}"/>${body}</svg>`;
-  const min = D.large ? 60 : 150;
-  return { svg, w: W, h: H, ppi, lowRes: ppi !== null && ppi < min, minPpi: min };
+  // sangria: só o fundo se estende além do corte; o layout continua medido no tamanho final
+  const b = preview ? 0 : bleedOf(d);
+  const VW = W + 2 * b; const VH = H + 2 * b;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="${-b} ${-b} ${VW} ${VH}" width="${preview ? '100%' : VW + 'mm'}" ${preview ? '' : `height="${VH}mm"`}><rect x="${-b}" y="${-b}" width="${VW}" height="${VH}" fill="${t.bg}"/>${body}</svg>`;
+  return { svg, w: W, h: H, bleed: b, ppi, lowRes: ppi !== null && ppi < REF_PPI, minPpi: REF_PPI };
 }
 
-module.exports = { buildSvg, dims, SIZES, imageSize, INSTAGRAM_URL, INSTAGRAM_HANDLE };
+const REF_PPI = 300; // referência de alta qualidade para a foto na impressão
+const bleedOf = (d) => Math.max(0, Math.min(20, Number(d && d.bleed_mm) || 0));
+module.exports = { resetOrientation, REF_PPI, bleedOf, jpegOrientation, buildSvg, dims, SIZES, imageSize, INSTAGRAM_URL, INSTAGRAM_HANDLE };

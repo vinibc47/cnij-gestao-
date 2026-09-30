@@ -114,6 +114,21 @@ const rejects = async (p, st, m) => { try { await p; ok(false, m + ' (deveria fa
       ok(Math.abs(pw - ew) < 1 && Math.abs(ph - eh) < 1, `dimensão física ${size} ${o}: ${pw} × ${ph} pt`);
     }
   }
+  // exportação para a gráfica: download direto, sangria, TrimBox, fonte embutida, foto original e QR
+  const cur = await A.get(`/signs/${sg.id}`);
+  await A.put(`/signs/${sg.id}`, { size: '150x100', orientation: 'paisagem', data: { ...cur.data, bleed_mm: 3 } });
+  const ei = await A.get(`/signs/${sg.id}/export-info`);
+  ok(ei.trim_mm.w === 1500 && ei.bleed_mm === 3 && ei.page_mm.w === 1506 && ei.photo && ei.ref_ppi === 300 && ei.below_ref === true, `conferência antes de exportar (${ei.photo && ei.photo.ppi} ppi efetivos, referência 300)`);
+  const rdl = await A.file(`/pdf/sign/${sg.id}?download=1`);
+  ok(/^attachment;/.test(rdl.headers.get('content-disposition') || '') && /1500x1000mm sangria 3mm/.test(decodeURIComponent(rdl.headers.get('content-disposition'))), 'download direto (attachment) com medidas no nome do arquivo');
+  const bdl = Buffer.from(await rdl.arrayBuffer());
+  const box = execSync('pdfinfo -box -', { input: bdl }).toString();
+  const tb = box.match(/TrimBox:\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)/).slice(1).map(Number); const mm = (v) => v * 25.4 / 72;
+  ok(/Pages:\s+1\n/.test(box) && Math.abs(mm(tb[2] - tb[0]) - 1500) < 0.1 && Math.abs(mm(tb[3] - tb[1]) - 1000) < 0.1, `página única; corte ${mm(tb[2] - tb[0]).toFixed(1)} × ${mm(tb[3] - tb[1]).toFixed(1)} mm (TrimBox) com sangria`);
+  ok(/yes\s+yes\s+yes/.test(execSync('pdffonts -', { input: bdl }).toString()), 'fonte Inter incorporada');
+  const imgs = execSync('pdfimages -list -', { input: bdl }).toString().trim().split('\n').slice(2);
+  ok(imgs.length === 1 && /\s731\s/.test(imgs[0]), 'única imagem é a foto original (logo, textos e QR vetoriais)');
+  await A.put(`/signs/${sg.id}`, { data: { ...cur.data, bleed_mm: 0 } });
 
   origLog('\nComparativo de orçamentos');
   const s1 = await A.post('/r/suppliers', { company: 'Marcenaria A' }); const s2 = await A.post('/r/suppliers', { company: 'Marcenaria B' });
