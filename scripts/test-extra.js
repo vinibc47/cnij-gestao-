@@ -130,6 +130,11 @@ const rejects = async (p, st, m) => { try { await p; ok(false, m + ' (deveria fa
   ok(imgs.length === 1 && /\s731\s/.test(imgs[0]), 'única imagem é a foto original (logo, textos e QR vetoriais)');
   await A.put(`/signs/${sg.id}`, { data: { ...cur.data, bleed_mm: 0 } });
 
+  { // logo: componente único, centro visual = centro da página (retrato e paisagem)
+    const pdfm = require('../server/pdf'); const L = pdfm.trimmedLogo();
+    const hp = pdfm.brandHeader(595.28); const hl = pdfm.brandHeader(841.89);
+    ok(L && Math.abs(hp.absolutePosition.x + L.w / 2 - 595.28 / 2) < 0.01 && Math.abs(hl.absolutePosition.x + L.w / 2 - 841.89 / 2) < 0.01, `logo centralizada pela área visível (${L.w.toFixed(1)} × ${L.h.toFixed(1)} pt)`);
+  }
   origLog('\nComparativo de orçamentos');
   const s1 = await A.post('/r/suppliers', { company: 'Marcenaria A' }); const s2 = await A.post('/r/suppliers', { company: 'Marcenaria B' });
   const q1 = await A.post('/r/quotes', { project_id: p1.id, item: 'Marcenaria', supplier_id: s1.id, amount: 20000, deadline_days: 30, payment_terms: '50% + 50%', included: 'Armários\nPainel\nInstalação' });

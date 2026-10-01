@@ -35,6 +35,48 @@ function logoData() {
   return `data:image/${ext === '.jpg' || ext === '.jpeg' ? 'jpeg' : 'png'};base64,${fs.readFileSync(p).toString('base64')}`;
 }
 
+// ------------------------------ cabeçalho com a logo (componente único de todos os PDFs) ------------------------------
+// A logo é recortada no desenho visível (sem bordas transparentes ou brancas, que deslocariam o centro visual)
+// e posicionada pela conta (largura da página − largura da logo) / 2, em todas as páginas.
+// O tamanho visível é o mesmo de antes: a escala é calculada sobre o arquivo original (caixa de 112 × 40 pt).
+const LOGO_BOX = { w: 112, h: 40, top: 28 };
+let logoCache = null;
+function trimmedLogo() {
+  const p = logoPath(); let st; try { st = fs.statSync(p); } catch { return null; }
+  const key = `${p}:${st.mtimeMs}:${st.size}`;
+  if (logoCache && logoCache.key === key) return logoCache.v;
+  const buf = fs.readFileSync(p); let v = null;
+  try {
+    let img; // { width, height, data RGBA }
+    if (buf[0] === 0x89 && buf.slice(1, 4).toString('latin1') === 'PNG') img = require('pngjs').PNG.sync.read(buf);
+    else if (buf[0] === 0xff && buf[1] === 0xd8) img = require('jpeg-js').decode(buf, { useTArray: true, formatAsRGBA: true });
+    if (img) {
+      const { width: W, height: H, data } = img;
+      // pixel "vazio" = transparente ou praticamente branco
+      const ink = (i) => data[i + 3] > 10 && !(data[i] > 245 && data[i + 1] > 245 && data[i + 2] > 245);
+      let x0 = W, y0 = H, x1 = -1, y1 = -1;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { if (ink((y * W + x) * 4)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+      if (x1 >= x0 && y1 >= y0) {
+        const cw = x1 - x0 + 1; const ch = y1 - y0 + 1;
+        const { PNG } = require('pngjs'); const out = new PNG({ width: cw, height: ch });
+        for (let y = 0; y < ch; y++) { const src = ((y0 + y) * W + x0) * 4; Buffer.from(data.buffer, data.byteOffset + src, cw * 4).copy(out.data, y * cw * 4); }
+        const scale = Math.min(LOGO_BOX.w / W, LOGO_BOX.h / H); // mesma escala do arquivo inteiro → tamanho preservado
+        v = { uri: `data:image/png;base64,${PNG.sync.write(out).toString('base64')}`, w: cw * scale, h: ch * scale, dy: y0 * scale, trim: { left: x0, right: W - 1 - x1, top: y0, bottom: H - 1 - y1, W, H } };
+      }
+    }
+  } catch { v = null; }
+  if (!v) { // formato não decodificável: usa o arquivo como está, centralizado pela largura do arquivo
+    const sz = require('./sign').imageSize(buf);
+    if (sz) { const sc = Math.min(LOGO_BOX.w / sz.w, LOGO_BOX.h / sz.h); v = { uri: logoData(), w: sz.w * sc, h: sz.h * sc, dy: 0, trim: null }; }
+  }
+  logoCache = { key, v };
+  return v;
+}
+function brandHeader(pageWidth) {
+  const L = trimmedLogo(); if (!L) return null;
+  return { image: L.uri, width: L.w, height: L.h, absolutePosition: { x: (pageWidth - L.w) / 2, y: LOGO_BOX.top + L.dy } };
+}
+
 // ------------------------------ texto com **negrito** ------------------------------
 function rich(text, base = {}) {
   const parts = String(text ?? '').split(/(\*\*[^*]+\*\*)/g).filter((s) => s !== '');
@@ -159,7 +201,7 @@ function build({ title, purpose, ident = [], content = [], issuedAt, draft = fal
   const o = docs.office();
   const issued = docs.brDate(String(issuedAt || today()).slice(0, 10));
   const contact = [o.address, o.phone, o.email].filter(Boolean).join('  ·  ');
-  let logo = null; try { logo = logoData(); } catch { logo = null; }
+  const pageW = landscape ? 841.89 : 595.28;
   // a margem inferior do último bloco não pode criar uma página em branco no fim do documento
   const items = [...content];
   while (items.length && (items[items.length - 1] === '' || items[items.length - 1] == null)) items.pop();
@@ -170,7 +212,7 @@ function build({ title, purpose, ident = [], content = [], issuedAt, draft = fal
     info: { title: info.title || title, author: o.name, subject: purpose, creator: 'CN&IJ Gestão', producer: 'CN&IJ Gestão' },
     watermark: draft ? { text: 'RASCUNHO', color: '#b0473b', opacity: 0.06, bold: true, fontSize: 90 } : undefined,
     // logo oficial centralizada no topo de todas as páginas (proporções preservadas)
-    header: () => (logo ? { image: logo, fit: [112, 40], alignment: 'center', margin: [M.l, 28, M.r, 0] } : null),
+    header: () => brandHeader(pageW),
     footer: (page, pages) => ({
       margin: [M.l, 22, M.r, 0],
       stack: [rule(cw, LINE, 0.6),
@@ -319,4 +361,4 @@ async function sendBuffer(res, buf, filename, download) {
   res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${safe.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]/g, '')}"; filename*=UTF-8''${encodeURIComponent(safe)}`);
   res.end(buf);
 }
-module.exports = { renderSignIsolated, sendBuffer, signDoc, build, render, send, tokensToContent, sectionTitle, subTitle, para, note, bullet, numbered, dataTable, identGrid, signatures, spacer, muted, rich, rule, logoPath, BRANDING_DIR, CONTENT_W, FILL, MUTED };
+module.exports = { brandHeader, trimmedLogo, LOGO_BOX, renderSignIsolated, sendBuffer, signDoc, build, render, send, tokensToContent, sectionTitle, subTitle, para, note, bullet, numbered, dataTable, identGrid, signatures, spacer, muted, rich, rule, logoPath, BRANDING_DIR, CONTENT_W, FILL, MUTED };
