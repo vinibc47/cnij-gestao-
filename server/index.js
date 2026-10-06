@@ -71,6 +71,7 @@ app.use('/api', require('./routes/core'));
 app.use('/api', require('./routes/ops').router);
 app.use('/api', require('./routes/docs').router);
 app.use('/api', require('./routes/extra').router);
+app.use('/api', require('./routes/clientarea').router);
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/r', crud.router);

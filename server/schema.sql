@@ -462,7 +462,49 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+
+-- Pendências de aprovação do cliente (o que depende de decisão dele) e histórico das decisões
+CREATE TABLE IF NOT EXISTS approvals (
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,                 -- o que precisa ser decidido
+  kind TEXT NOT NULL DEFAULT 'orcamento', -- orcamento | documento | material | outro
+  quote_item TEXT,                     -- categoria de orçamentos (ex.: Marcenaria) quando a decisão é escolher uma opção
+  quote_id INTEGER REFERENCES quotes(id) ON DELETE SET NULL,
+  document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+  reason TEXT,                         -- por que a decisão é necessária
+  blocks_stage TEXT,                   -- etapa que depende da decisão
+  due_date TEXT,
+  status TEXT NOT NULL DEFAULT 'aberta', -- aberta | ajustes | aprovada | cancelada
+  decided_quote_id INTEGER REFERENCES quotes(id) ON DELETE SET NULL,
+  decided_version INTEGER,
+  decided_at TEXT,
+  client_visible INTEGER NOT NULL DEFAULT 1,
+  archived INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS approval_events (
+  id INTEGER PRIMARY KEY,
+  approval_id INTEGER NOT NULL REFERENCES approvals(id) ON DELETE CASCADE,
+  action TEXT NOT NULL,                -- criada | aprovada | ajustes | reaberta | correcao | cancelada | resolvida
+  actor TEXT NOT NULL,                 -- cliente | escritorio | sistema
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  origin TEXT,                         -- portal | whatsapp | reuniao | telefone | email | outro
+  confirmed_at TEXT,                   -- data em que o cliente confirmou (registro externo)
+  quote_id INTEGER REFERENCES quotes(id) ON DELETE SET NULL,
+  quote_version INTEGER,
+  snapshot TEXT,                       -- fornecedor, valor, escopo e versão no momento da decisão
+  comment TEXT,
+  attachment_doc_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+  corrects_event_id INTEGER REFERENCES approval_events(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Índices
+CREATE INDEX IF NOT EXISTS ix_approvals_project ON approvals(project_id, status);
+CREATE INDEX IF NOT EXISTS ix_approval_events ON approval_events(approval_id);
 CREATE INDEX IF NOT EXISTS ix_projects_client ON projects(client_id);
 CREATE INDEX IF NOT EXISTS ix_phases_project ON project_phases(project_id);
 CREATE INDEX IF NOT EXISTS ix_works_project ON works(project_id);

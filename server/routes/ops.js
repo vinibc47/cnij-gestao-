@@ -335,6 +335,8 @@ router.post('/files', upload.array('files', 20), wrap((req, res) => {
       title: files.length === 1 && b.title ? b.title : name.replace(/\.[^.]+$/, ''), category: b.category || (f.mimetype.startsWith('image/') ? 'Imagens / renders' : null),
       ...meta, entity, entity_id: entityId, file_path: path.relative(UPLOAD_DIR, f.path), file_name: name, mime: f.mimetype, size: f.size,
       expires_at: b.expires_at || null, issued_at: b.issued_at || null, client_visible: b.client_visible === '1' || b.client_visible === 'true' ? 1 : 0,
+      published_at: b.client_visible === '1' || b.client_visible === 'true' ? nowIso() : null,
+      showcase: (b.client_visible === '1' || b.client_visible === 'true' || b.showcase === '1') && (b.showcase === '1' || /^(image|video)\//.test(f.mimetype) || /apresenta/i.test(b.category || '')) && !['work_logs', 'incomes', 'quotes', 'expenses'].includes(entity || '') ? 1 : 0,
       notes: b.notes || null, uploaded_by: u.id, created_at: nowIso(),
     });
   });
@@ -342,13 +344,25 @@ router.post('/files', upload.array('files', 20), wrap((req, res) => {
   res.status(201).json({ ids, rows: ids.map((id) => get('SELECT * FROM documents WHERE id = ?', id)) });
 }));
 
-function sendFile(res, doc, inline) {
+function sendFile(res, doc, inline, req) {
   if (!doc.file_path) throw new HttpError(404, 'Documento sem arquivo anexado.');
   const full = path.join(UPLOAD_DIR, doc.file_path);
   if (!full.startsWith(UPLOAD_DIR) || !fs.existsSync(full)) throw new HttpError(404, 'Arquivo não encontrado.');
   res.setHeader('Content-Type', doc.mime || 'application/octet-stream');
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(doc.file_name || 'arquivo')}`);
+  const size = fs.statSync(full).size;
+  // pedidos parciais (Range): necessários para tocar vídeos no navegador, inclusive no iPhone
+  const m = req && /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+  if (m && (m[1] || m[2])) {
+    let start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2])); let end = m[1] && m[2] ? Number(m[2]) : size - 1;
+    if (start >= size || end < start) { res.status(416).setHeader('Content-Range', `bytes */${size}`); return res.end(); }
+    end = Math.min(end, size - 1);
+    res.status(206); res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`); res.setHeader('Content-Length', end - start + 1);
+    return fs.createReadStream(full, { start, end }).pipe(res);
+  }
+  res.setHeader('Content-Length', size);
   fs.createReadStream(full).pipe(res);
 }
 router.get('/files/:id', wrap((req, res) => {
@@ -356,7 +370,7 @@ router.get('/files/:id', wrap((req, res) => {
   if (!doc) throw new HttpError(404, 'Documento não encontrado.');
   if (doc.entity && ATTACHABLE.includes(doc.entity)) fetchOne(R[doc.entity], req.user, doc.entity_id);
   else fetchOne(R.documents, req.user, doc.id);
-  sendFile(res, doc, req.query.inline === '1');
+  sendFile(res, doc, req.query.inline === '1', req);
 }));
 router.get('/attachments/:entity/:id', wrap((req, res) => {
   if (!ATTACHABLE.includes(req.params.entity)) throw new HttpError(400, 'Entidade inválida.');

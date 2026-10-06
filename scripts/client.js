@@ -9,6 +9,6 @@ module.exports = function client(base) {
     return data;
   }
   return { get: (p) => call('GET', p), post: (p, b) => call('POST', p, b || {}), put: (p, b) => call('PUT', p, b || {}), del: (p) => call('DELETE', p), raw: call, reset: () => { cookie = ''; },
-    file: (path) => fetch(base + '/api' + path, { headers: { 'X-Requested-With': 'cnij', cookie } }),
+    file: (path, h = {}) => fetch(base + '/api' + path, { headers: { 'X-Requested-With': 'cnij', cookie, ...h } }),
     upload: async (path, fd) => { const r = await fetch(base + '/api' + path, { method: 'POST', body: fd, headers: { 'X-Requested-With': 'cnij', cookie } }); const d = await r.json(); if (!r.ok) throw Object.assign(new Error(d.error), { status: r.status }); return d; } };
 };

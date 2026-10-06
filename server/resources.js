@@ -285,6 +285,7 @@ R.quotes = {
     F('project_id', 'Projeto', 'ref', { ref: 'projects', required: true, filter: true }), F('work_id', 'Obra', 'ref', { ref: 'works' }),
     F('item', 'Item (ex.: Marcenaria)', 'option', { opt: 'fornecedor', free: true, required: true, filter: true }),
     F('supplier_id', 'Fornecedor', 'ref', { ref: 'suppliers', filter: true }), F('amount', 'Valor', 'money'),
+    F('scope', 'Descrição do escopo', 'textarea', { wide: true }),
     F('status', 'Status', 'select', { list: 'QUOTE_STATUS', default: 'recebido', filter: true }),
     F('received_at', 'Recebido em', 'date', { default: '$today' }), F('valid_until', 'Validade', 'date'),
     F('deadline_days', 'Prazo de execução (dias)', 'number'),
@@ -297,7 +298,22 @@ R.quotes = {
   ],
   columns: ['item', 'supplier_name', 'project_name', 'amount', 'status', 'client_visible', 'client_selected'],
   read: (u) => P.hasModule(u, 'obras'), scope: scopeBy('q.project_id'), write: (u, row, d) => managers(u) || projOk(u, d, row),
-  beforeSave: (d, row) => { if ('amount' in d && d.amount == null) d.amount = 0; if (!row && d.amount == null) d.amount = 0; },
+  beforeSave: (d, row) => {
+    if ('amount' in d && d.amount == null) d.amount = 0; if (!row && d.amount == null) d.amount = 0;
+    if (d.client_visible == 1 && (!row || !row.client_visible)) d.published_at = require('./util').nowIso();
+    // orçamento já aprovado que muda de valor ou escopo vira nova versão (a aprovação anterior fica ligada à versão original)
+    if (row) {
+      const KEYS = ['amount', 'scope', 'included', 'excluded', 'payment_terms', 'deadline_days', 'supplier_id'];
+      const changed = KEYS.some((k) => k in d && String(d[k] ?? '') !== String(row[k] ?? ''));
+      if (changed && get("SELECT 1 FROM approval_events e JOIN approvals a ON a.id = e.approval_id WHERE e.quote_id = ? AND e.quote_version = ? AND e.action = 'aprovada' AND a.status = 'aprovada' AND a.decided_quote_id = ?", row.id, row.version || 1, row.id)) {
+        d.version = (row.version || 1) + 1; d.client_selected = 0; d.client_selected_at = null;
+      }
+    }
+  },
+  afterSave: (id, d, u, created, body, row) => {
+    if (!row || !d.version || d.version === row.version) return;
+    require('./services/approvals').quoteRevised(id, d.version, u);
+  },
 };
 
 R.proposals = {
@@ -506,6 +522,7 @@ R.documents = {
   },
   write: (u, row, d) => managers(u) || (row && row.uploaded_by === u.id) || projOk(u, d, row),
   beforeCreate: (d, u) => { d.uploaded_by = u.id; },
+  beforeSave: (d, row) => { if (d.client_visible == 1 && (!row || !row.client_visible)) d.published_at = require('./util').nowIso(); },
   afterDelete: (row) => {
     if (!row.file_path) return;
     const fs = require('fs'); const path = require('path');

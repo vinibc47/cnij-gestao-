@@ -52,7 +52,11 @@ const MIGRATIONS = {
     services: 'TEXT', prospect_name: 'TEXT', prospect_doc: 'TEXT', prospect_phone: 'TEXT', prospect_email: 'TEXT', prospect_address: 'TEXT', prospect_city: 'TEXT',
     client_converted_at: 'TEXT',
   },
-  quotes: { included: 'TEXT', excluded: 'TEXT', payment_terms: 'TEXT' },
+  quotes: { included: 'TEXT', excluded: 'TEXT', payment_terms: 'TEXT', scope: 'TEXT', version: 'INTEGER NOT NULL DEFAULT 1', published_at: 'TEXT' },
+  // capa do portal (arquivo original preservado; recorte apenas visual) e próxima etapa informada ao cliente
+  projects: { cover_doc_id: 'INTEGER', cover_x: 'REAL', cover_y: 'REAL', cover_zoom: 'REAL', cover_display: 'TEXT', next_step: 'TEXT', next_step_due: 'TEXT' },
+  // materiais da aba "Veja seu projeto"
+  documents: { showcase: 'INTEGER NOT NULL DEFAULT 0', portal_title: 'TEXT', portal_desc: 'TEXT', portal_group: 'TEXT', portal_order: 'INTEGER', replaced_by: 'INTEGER', published_at: 'TEXT' },
   contracts: { service_type: 'TEXT', template_id: 'INTEGER', template_version: 'INTEGER', body: 'TEXT', data: 'TEXT', payment_plan: 'TEXT' },
   works: { budget_notes: 'TEXT' },
   work_phases: { responsible: 'TEXT', pending: 'TEXT', next_action: 'TEXT' },
@@ -81,6 +85,13 @@ function migrate() {
     for (const [col, def] of Object.entries(cols)) if (!have.has(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
   }
   relaxProposalClient();
+  // uma vez: imagens, vídeos e apresentações já liberadas continuam aparecendo na nova aba "Veja seu projeto"
+  if (getSetting('mig_showcase_v1') === null) {
+    run("UPDATE documents SET showcase = 1, published_at = COALESCE(published_at, created_at) WHERE client_visible = 1 AND (mime LIKE 'image/%' OR mime LIKE 'video/%' OR lower(COALESCE(category,'')) LIKE '%apresenta%') AND COALESCE(entity,'') NOT IN ('work_logs','incomes','quotes')");
+    run("UPDATE documents SET published_at = COALESCE(published_at, created_at) WHERE client_visible = 1");
+    run("UPDATE quotes SET published_at = COALESCE(published_at, received_at, created_at) WHERE client_visible = 1");
+    setSetting('mig_showcase_v1', '1');
+  }
   // status de proposta simplificados: Rascunho, Enviada, Aprovada, Recusada, Expirada
   run("UPDATE proposals SET status = 'enviada' WHERE status IN ('visualizada','negociacao')");
 }

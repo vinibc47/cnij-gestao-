@@ -82,7 +82,7 @@ router.get('/users/:id/projects', wrap((req, res) => {
 // ------------------------------ PARÂMETROS ------------------------------
 const SETTINGS = ['office_name', 'office_tagline', 'office_doc', 'office_address', 'office_phone', 'office_email', 'opening_balance', 'opening_balance_date',
   'alert_days_payments', 'alert_days_tasks', 'alert_days_deliveries', 'alert_days_documents', 'alert_days_proposals', 'recurring_months_ahead', 'backup_keep',
-  'office_city', 'office_timezone', 'office_pix_key', 'office_pix_type', 'office_pix_name', 'office_pix_bank', 'contractor_name', 'contractor_doc', 'contractor_address', 'contractor_registry', 'sign_display_name',
+  'office_city', 'office_timezone', 'office_pix_key', 'office_pix_type', 'office_pix_name', 'office_pix_bank', 'contractor_name', 'contractor_doc', 'contractor_address', 'contractor_registry', 'sign_display_name', 'portal_whatsapp',
   'proposal_validity_days', 'whatsapp_template', 'whatsapp_template_overdue'];
 const TIMEZONES = ['America/Campo_Grande', 'America/Cuiaba', 'America/Sao_Paulo', 'America/Manaus', 'America/Porto_Velho', 'America/Rio_Branco', 'America/Belem', 'America/Fortaleza', 'America/Recife', 'America/Bahia', 'America/Noronha'];
 router.get('/settings', P.requireAdmin, (req, res) => res.json({ ...Object.fromEntries(SETTINGS.map((k) => [k, getSetting(k, '')])), office_logo: getSetting('office_logo', ''), _timezones: TIMEZONES, _wa_defaults: { today: require('../services/docs').WA_TODAY, overdue: require('../services/docs').WA_OVERDUE } }));
