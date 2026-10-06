@@ -1,6 +1,7 @@
 import { S, api, html, el, toHTML, icon, money, date, dateShort, relDay, badge, label, prio, progress, avatar, user, openForm, drawer, checklist, comments, attachments, dropzone, fileRow, fileUrl, toast, fail, menu, confirmDialog, datetime, today, isManager, can, table, pct, num, deleteRow, $$, esc, archiveRow, modal, copyText } from '../lib.js';
 import { listPage, rowActions } from './common.js';
 import { quotesPanel } from './quotes.js';
+import { clientAreaPanel } from './clientarea.js';
 import { newEntry, entryDrawer } from './finance.js';
 import { taskDrawer } from './tasks.js';
 
@@ -59,7 +60,7 @@ async function detail(ctx, id) {
   const tabs = [
     ['geral', 'Visão geral'], ['etapas', 'Etapas', d.phases.length], ['tarefas', 'Tarefas', openTasks.length], ['obra', 'Obra', d.works.length], ['infoobra', 'Informações da obra'],
     can('obras') || d.quotes.length ? ['orcamentos', 'Orçamentos', d.quotes.length] : null, fin ? ['financeiro', 'Financeiro'] : null,
-    ['documentos', 'Documentos e imagens', d.documents.length + d.images.length], ['agenda', 'Agenda', d.events.length], ['horas', 'Horas'], ['historico', 'Histórico'],
+    ['documentos', 'Documentos e imagens', d.documents.length + d.images.length], ['cliente', 'Área do cliente'], ['agenda', 'Agenda', d.events.length], ['horas', 'Horas'], ['historico', 'Histórico'],
   ].filter(Boolean);
   let activeTab = ctx.query.tab || 'geral';
 
@@ -244,6 +245,7 @@ const TABS = {
   },
 
   orcamentos(body, d, { reload }) { body.appendChild(quotesPanel(d.quotes, { projectId: d.project.id, onChange: reload })); },
+  cliente(body, d) { clientAreaPanel(body, d.project.id); },
 
   async infoobra(body, d, { reload }) {
     const { rowsEditor, dirtyTracker, openPdf, readForm } = await import('../lib.js');

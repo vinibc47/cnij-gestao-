@@ -28,7 +28,7 @@ const T = {
       <div class="grid g2">
         <div class="card"><div class="card-head"><h3>Dados do escritório</h3></div><div class="form-grid">
           ${f('office_name', 'Nome do escritório', { wide: true })}${f('office_tagline', 'Assinatura', { wide: true })}
-          ${f('office_doc', 'CNPJ')}${f('office_email', 'E-mail')}${f('office_phone', 'Telefones', { wide: true })}${f('office_address', 'Endereço', { wide: true })}
+          ${f('office_doc', 'CNPJ')}${f('office_email', 'E-mail')}${f('office_phone', 'Telefones', { wide: true })}${f('portal_whatsapp', 'WhatsApp do botão “Fale com o escritório” (Área do Cliente)', { wide: true, ph: '(67) 98207-7556', hint: 'Se ficar vazio, usa o primeiro telefone acima.' })}${f('office_address', 'Endereço', { wide: true })}
           ${f('office_city', 'Cidade para documentos', { ph: 'Campo Grande – MS', hint: 'Usada em “local e data” dos contratos.' })}
           <div class="field"><label>Fuso horário do escritório</label><select name="office_timezone">${s._timezones.map((z) => html`<option ${z === (s.office_timezone || 'America/Campo_Grande') ? 'selected' : ''}>${z}</option>`)}</select><span class="hint">Define “hoje” para vencimentos, lembretes e datas dos PDFs.</span></div>
         </div></div>
