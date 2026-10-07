@@ -80,11 +80,19 @@ app.use('/api', (req, res, next) => next(new HttpError(404, 'Rota não encontrad
 // Frontend
 const PUBLIC = path.join(__dirname, '..', 'public');
 // HTML/CSS/JS sempre revalidados (atualizações aparecem na hora); imagens e fontes ficam em cache
-app.use(express.static(PUBLIC, { index: 'index.html', setHeaders(res, file) {
+// página inicial com o endereço do site nas tags de prévia de link (WhatsApp exige endereço completo da imagem)
+const INDEX_HTML = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
+const sendIndex = (req, res) => {
+  const base = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.setHeader('Cache-Control', 'no-cache');
+  res.send(INDEX_HTML.replace(/__BASE__/g, base.replace(/[<>"&]/g, '')));
+};
+app.get(['/', '/index.html'], sendIndex);
+app.use(express.static(PUBLIC, { index: false, setHeaders(res, file) {
   if (/\.(html|css|js|webmanifest)$/i.test(file)) res.setHeader('Cache-Control', 'no-cache');
   else res.setHeader('Cache-Control', 'public, max-age=86400');
 } }));
-app.get(/^\/(?!api).*/, (req, res) => res.sendFile(path.join(PUBLIC, 'index.html')));
+app.get(/^\/(?!api).*/, sendIndex);
 
 // Tratamento de erros
 app.use((err, req, res, next) => {
