@@ -68,6 +68,17 @@ $SITES {
   reverse_proxy app:3000
 }
 CADDY
+# "www": redireciona para o endereço sem "www" (o certificado sai quando o DNS do www existir)
+case "$DOMAIN" in
+  *.sslip.io|www.*) ;;
+  *) cat >> $BASE/Caddyfile <<CADDY
+
+www.$DOMAIN {
+  redir https://$DOMAIN{uri} permanent
+}
+CADDY
+  ;;
+esac
 
 cat > $BASE/docker-compose.yml <<'COMPOSE'
 services:
