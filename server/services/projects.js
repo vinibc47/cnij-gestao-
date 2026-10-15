@@ -49,16 +49,19 @@ function profitability(projectId) {
   const p = get('SELECT id, name, contract_value FROM projects WHERE id = ?', projectId);
   if (!p) return null;
   const contracted = Number(p.contract_value) || Number(val("SELECT COALESCE(SUM(amount),0) FROM contracts WHERE project_id = ? AND status <> 'cancelado'", projectId)) || 0;
-  const received = val("SELECT COALESCE(SUM(amount),0) FROM incomes WHERE project_id = ? AND status = 'recebido'", projectId);
-  const receivable = val("SELECT COALESCE(SUM(amount),0) FROM incomes WHERE project_id = ? AND status IN ('previsto','a_receber','vencido')", projectId);
-  const overdue = val("SELECT COALESCE(SUM(amount),0) FROM incomes WHERE project_id = ? AND status = 'vencido'", projectId);
+  // somente honorários/receitas próprias: recursos para repasse e reembolsos não são receita do escritório
+  const HON = "AND COALESCE(nature,'honorarios') = 'honorarios'";
+  const received = val(`SELECT COALESCE(SUM(amount),0) FROM incomes WHERE project_id = ? ${HON} AND status = 'recebido'`, projectId);
+  const receivable = val(`SELECT COALESCE(SUM(amount),0) FROM incomes WHERE project_id = ? ${HON} AND status IN ('previsto','a_receber','vencido')`, projectId);
+  const overdue = val(`SELECT COALESCE(SUM(amount),0) FROM incomes WHERE project_id = ? ${HON} AND status = 'vencido'`, projectId);
   const rt = val("SELECT COALESCE(SUM(amount),0) FROM incomes WHERE project_id = ? AND status='recebido' AND category = 'Reserva técnica (RT)'", projectId);
-  // Custos contabilizados: despesas pagas ou a pagar pelo escritório (exceto canceladas)
-  const base = "FROM expenses WHERE project_id = ? AND paid_by = 'escritorio' AND status <> 'cancelado'";
+  // Custos contabilizados: despesas do escritório + itens de obra que o escritório assumiu como custo próprio.
+  // Pagamentos com recurso de repasse ou adiantamentos a reembolsar são dinheiro do cliente — não são custo do escritório.
+  const base = "FROM expenses WHERE project_id = ? AND paid_by = 'escritorio' AND status <> 'cancelado' AND NOT (flow = 'obra' AND COALESCE(funding,'') IN ('repasse','adiantamento'))";
   const workCosts = val(`SELECT COALESCE(SUM(amount),0) ${base} AND (work_id IS NOT NULL OR category IN ('Obra','Material'))`, projectId);
   const directCosts = val(`SELECT COALESCE(SUM(amount),0) ${base} AND work_id IS NULL AND COALESCE(category,'') NOT IN ('Obra','Material')`, projectId);
   const hours = get('SELECT COALESCE(SUM(t.hours),0) h, COALESCE(SUM(t.hours * COALESCE(u.hourly_cost,0)),0) c FROM time_entries t JOIN users u ON u.id = t.user_id WHERE t.project_id = ?', projectId);
-  const clientPaidWork = val("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE project_id = ? AND paid_by = 'cliente' AND status <> 'cancelado'", projectId);
+  const clientPaidWork = val("SELECT COALESCE(SUM(amount),0) FROM expenses WHERE project_id = ? AND flow = 'obra' AND (paid_by = 'cliente' OR COALESCE(funding,'') IN ('repasse','adiantamento')) AND status <> 'cancelado'", projectId);
   const revenue = round2(contracted + rt);
   const totalCosts = round2(workCosts + directCosts + hours.c);
   const result = round2(revenue - totalCosts);

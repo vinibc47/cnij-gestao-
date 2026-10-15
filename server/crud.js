@@ -200,6 +200,8 @@ router.delete('/:res/:id', wrap((req, rs) => {
   const row = fetchOne(r, req.user, Number(req.params.id));
   const allowed = r.remove ? r.remove(req.user, row) : r.write(req.user, row, row);
   if (!allowed) throw new HttpError(403, r.archivable ? 'Sem permissão para excluir. Utilize "Arquivar".' : 'Sem permissão para excluir.');
+  if ((r.table === 'incomes' && row.status === 'recebido') || (r.table === 'expenses' && row.status === 'pago'))
+    throw new HttpError(400, 'Pagamentos registrados não são excluídos. Use “Estornar” (fica no histórico) e, se for o caso, altere o status para “Cancelado”.');
   if (r.table === 'projects' && (row.status === 'encerrado' || get('SELECT 1 FROM incomes WHERE project_id = ? UNION SELECT 1 FROM expenses WHERE project_id = ? LIMIT 1', row.id, row.id)))
     throw new HttpError(400, 'Projetos encerrados ou com lançamentos financeiros não são excluídos — utilize "Arquivar" para manter o histórico.');
   try {

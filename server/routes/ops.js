@@ -178,17 +178,15 @@ router.post('/contracts/:id/receivables', wrap((req, res) => {
   res.json({ ids });
 }));
 
+// Orçamento contratado → itens da OBRA (custo do cliente). Quem paga é escolhido; o padrão é o cliente
+// pagar diretamente ao fornecedor, o que NÃO movimenta o caixa do escritório.
 router.post('/quotes/:id/to-expense', wrap((req, res) => {
   if (!P.canFinance(req.user)) throw new HttpError(403, 'Sem acesso ao financeiro.');
   const q = fetchOne(R.quotes, req.user, Number(req.params.id));
   const b = req.body || {};
-  const ids = finance.generateInstallments('expenses', {
-    supplier_id: q.supplier_id, project_id: q.project_id, work_id: q.work_id, quote_id: q.id, category: b.category || 'Obra',
-    description: `${q.item} — ${q.supplier_name || 'fornecedor'}`, paid_by: b.paid_by || 'escritorio', responsible_id: req.user.id,
-    method: b.method || null, created_by: req.user.id,
-  }, { total: b.total || q.amount, count: b.count || 1, first_due: b.first_due || today() });
-  run("UPDATE quotes SET status = 'contratado' WHERE id = ?", q.id);
-  audit(req, 'generate', 'quotes', q.id, `Orçamento ${q.item} contratado — ${ids.length} lançamento(s)`);
+  const ids = require('../services/money').createObraItems(req.user, { ...b, quote_id: q.id, project_id: q.project_id, work_id: q.work_id || b.work_id,
+    supplier_id: q.supplier_id, service: q.item, total: b.total || q.amount, mode: b.mode || (Number(b.count) > 1 ? 'parcelas' : 'unica'), first_due: b.first_due === undefined ? today() : b.first_due });
+  audit(req, 'generate', 'quotes', q.id, `Orçamento ${q.item} contratado — ${ids.length} parcela(s) no financeiro da obra`);
   res.json({ ids });
 }));
 
@@ -204,40 +202,17 @@ router.post('/finance/installments', wrap((req, res) => {
   base.created_by = req.user.id;
   if (table === 'incomes' && base.project_id && !base.client_id) base.client_id = (get('SELECT client_id FROM projects WHERE id = ?', base.project_id) || {}).client_id;
   if (table === 'expenses' && base.work_id && !base.project_id) base.project_id = (get('SELECT project_id FROM works WHERE id = ?', base.work_id) || {}).project_id;
+  if (table === 'expenses') {
+    if (base.flow !== 'obra' && base.paid_by === 'cliente' && !b.flow) base.flow = 'obra';
+    if (base.flow !== 'obra') { base.flow = 'escritorio'; base.paid_by = 'escritorio'; base.funding = null; }
+    else { if (!base.project_id) throw new HttpError(400, 'Item da obra precisa estar ligado a um projeto.'); if (base.paid_by !== 'escritorio') { base.paid_by = 'cliente'; base.funding = null; base.account = null; } else if (!base.funding) base.funding = 'adiantamento'; }
+  }
   const ids = finance.generateInstallments(table, base, { total: b.total, count: b.count, first_due: b.first_due, interval: b.interval, first_paid: !!b.first_paid });
   audit(req, 'create', table, ids[0], `${ids.length} parcela(s) geradas: ${base.description}`);
   res.status(201).json({ ids });
 }));
 
-router.post('/finance/:table/:id/pay', wrap((req, res) => {
-  if (!P.canFinance(req.user)) throw new HttpError(403, 'Sem acesso ao financeiro.');
-  const table = req.params.table === 'expenses' ? 'expenses' : 'incomes';
-  const row = fetchOne(R[table], req.user, Number(req.params.id));
-  const paidAt = req.body.paid_at || today();
-  const amount = req.body.amount ? round2(req.body.amount) : row.amount;
-  tx(() => {
-    if (amount < row.amount - 0.009) {
-      // Pagamento parcial: o saldo restante vira um novo lançamento com o mesmo vencimento
-      const rest = { ...row }; ['id', 'created_at', 'updated_at', 'client_name', 'project_name', 'contract_number', 'supplier_name', 'work_name', 'responsible_name', 'receipts_count'].forEach((k) => delete rest[k]);
-      rest.amount = round2(row.amount - amount); rest.paid_at = null; rest.status = finance.OPEN[table];
-      rest.description = `${row.description} (saldo)`; finance.normalize(table, rest);
-      insert(table, rest);
-    }
-    run(`UPDATE ${table} SET amount = ?, paid_at = ?, status = ?, method = COALESCE(?, method), updated_at = ? WHERE id = ?`,
-      amount, paidAt, finance.PAID[table], req.body.method || null, nowIso(), row.id);
-  });
-  audit(req, 'pay', table, row.id, `${table === 'incomes' ? 'Recebimento' : 'Pagamento'} registrado: ${row.description} — R$ ${amount.toFixed(2)}`);
-  res.json(fetchOne(R[table], req.user, row.id));
-}));
-router.post('/finance/:table/:id/unpay', wrap((req, res) => {
-  if (!P.canFinance(req.user)) throw new HttpError(403, 'Sem acesso ao financeiro.');
-  const table = req.params.table === 'expenses' ? 'expenses' : 'incomes';
-  const row = fetchOne(R[table], req.user, Number(req.params.id));
-  const d = { status: finance.OPEN[table], paid_at: null }; finance.normalize(table, d, row);
-  run(`UPDATE ${table} SET status = ?, paid_at = NULL WHERE id = ?`, d.status, row.id);
-  audit(req, 'unpay', table, row.id, `Baixa estornada: ${row.description}`);
-  res.json(fetchOne(R[table], req.user, row.id));
-}));
+// registrar/estornar pagamento: ver routes/money.js (com histórico e sem duplicidade)
 router.get('/finance/cashflow', wrap((req, res) => {
   if (!P.canFinance(req.user)) throw new HttpError(403, 'Sem acesso ao financeiro.');
   automation.runAutomations();
@@ -378,4 +353,4 @@ router.get('/attachments/:entity/:id', wrap((req, res) => {
   res.json(all('SELECT d.*, u.name uploaded_by_name FROM documents d LEFT JOIN users u ON u.id = d.uploaded_by WHERE entity = ? AND entity_id = ? ORDER BY d.id DESC', req.params.entity, Number(req.params.id)));
 }));
 
-module.exports = { router, sendFile, UPLOAD_DIR };
+module.exports = { router, sendFile, UPLOAD_DIR, upload };

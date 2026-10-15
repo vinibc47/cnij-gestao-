@@ -19,23 +19,23 @@ router.get('/', wrap((req, res) => {
   const out = { year, from, to };
 
   if (P.canFinance(u)) {
-    const inc = Object.fromEntries(all("SELECT substr(paid_at,1,7) m, SUM(amount) v FROM incomes WHERE status='recebido' AND substr(paid_at,1,4) = ? GROUP BY m", String(year)).map((r) => [r.m, r.v]));
-    const exp = Object.fromEntries(all("SELECT substr(paid_at,1,7) m, SUM(amount) v FROM expenses WHERE status='pago' AND paid_by='escritorio' AND substr(paid_at,1,4) = ? GROUP BY m", String(year)).map((r) => [r.m, r.v]));
+    const inc = Object.fromEntries(all("SELECT substr(paid_at,1,7) m, SUM(amount) v FROM incomes WHERE status='recebido' AND COALESCE(nature,'honorarios')='honorarios' AND substr(paid_at,1,4) = ? GROUP BY m", String(year)).map((r) => [r.m, r.v]));
+    const exp = Object.fromEntries(all("SELECT substr(paid_at,1,7) m, SUM(amount) v FROM expenses WHERE status='pago' AND paid_by='escritorio' AND NOT (flow='obra' AND COALESCE(funding,'') IN ('repasse','adiantamento')) AND substr(paid_at,1,4) = ? GROUP BY m", String(year)).map((r) => [r.m, r.v]));
     const monthly = months.map((m) => ({ month: m, revenue: round2(inc[m] || 0), expenses: round2(exp[m] || 0), profit: round2((inc[m] || 0) - (exp[m] || 0)) }));
     const tot = monthly.reduce((a, m) => ({ revenue: a.revenue + m.revenue, expenses: a.expenses + m.expenses }), { revenue: 0, expenses: 0 });
     const overdue = all(`SELECT i.id, i.description, i.amount, i.due_date, c.name client_name, c.id client_id FROM incomes i LEFT JOIN clients c ON c.id = i.client_id WHERE i.status = 'vencido' ORDER BY i.due_date`);
     const aging = { '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0 };
     overdue.forEach((o) => { const d = daysBetween(o.due_date, t); aging[d <= 30 ? '1-30' : d <= 60 ? '31-60' : d <= 90 ? '61-90' : '90+'] += o.amount; });
-    const receivedTotal = val("SELECT COALESCE(SUM(amount),0) FROM incomes WHERE status='recebido' AND due_date BETWEEN ? AND ?", from, to);
+    const receivedTotal = val("SELECT COALESCE(SUM(amount),0) FROM incomes WHERE status='recebido' AND COALESCE(nature,'honorarios')='honorarios' AND due_date BETWEEN ? AND ?", from, to);
     const dueTotal = val("SELECT COALESCE(SUM(amount),0) FROM incomes WHERE status IN ('recebido','vencido') AND due_date BETWEEN ? AND ?", from, to);
     const overdueInPeriod = val("SELECT COALESCE(SUM(amount),0) FROM incomes WHERE status='vencido' AND due_date BETWEEN ? AND ?", from, to);
     out.finance = {
       monthly, total_revenue: round2(tot.revenue), total_expenses: round2(tot.expenses), profit: round2(tot.revenue - tot.expenses),
       margin: tot.revenue ? round2(((tot.revenue - tot.expenses) / tot.revenue) * 100) : null,
-      yearly: r2(all("SELECT substr(paid_at,1,4) label, SUM(amount) value FROM incomes WHERE status='recebido' AND paid_at IS NOT NULL GROUP BY 1 ORDER BY 1 DESC LIMIT 6")).reverse(),
-      revenue_by_category: r2(all("SELECT COALESCE(category,'Sem categoria') label, SUM(amount) value FROM incomes WHERE status='recebido' AND paid_at BETWEEN ? AND ? GROUP BY 1 ORDER BY 2 DESC", from, to)),
-      expenses_by_category: r2(all("SELECT COALESCE(category,'Sem categoria') label, SUM(amount) value FROM expenses WHERE status='pago' AND paid_by='escritorio' AND paid_at BETWEEN ? AND ? GROUP BY 1 ORDER BY 2 DESC", from, to)),
-      receivables_open: round2(val("SELECT COALESCE(SUM(amount),0) FROM incomes WHERE status IN ('previsto','a_receber')")),
+      yearly: r2(all("SELECT substr(paid_at,1,4) label, SUM(amount) value FROM incomes WHERE status='recebido' AND COALESCE(nature,'honorarios')='honorarios' AND paid_at IS NOT NULL GROUP BY 1 ORDER BY 1 DESC LIMIT 6")).reverse(),
+      revenue_by_category: r2(all("SELECT COALESCE(category,'Sem categoria') label, SUM(amount) value FROM incomes WHERE status='recebido' AND COALESCE(nature,'honorarios')='honorarios' AND paid_at BETWEEN ? AND ? GROUP BY 1 ORDER BY 2 DESC", from, to)),
+      expenses_by_category: r2(all("SELECT COALESCE(category,'Sem categoria') label, SUM(amount) value FROM expenses WHERE status='pago' AND paid_by='escritorio' AND NOT (flow='obra' AND COALESCE(funding,'') IN ('repasse','adiantamento')) AND paid_at BETWEEN ? AND ? GROUP BY 1 ORDER BY 2 DESC", from, to)),
+      receivables_open: round2(val("SELECT COALESCE(SUM(amount),0) FROM incomes WHERE status IN ('previsto','a_receber') AND COALESCE(nature,'honorarios')='honorarios'")),
       receivables_next: r2(all("SELECT substr(due_date,1,7) label, SUM(amount) value FROM incomes WHERE status IN ('previsto','a_receber','vencido') GROUP BY 1 ORDER BY 1 LIMIT 12")),
       overdue_total: round2(overdue.reduce((s, o) => s + o.amount, 0)), overdue_list: overdue,
       aging: Object.entries(aging).map(([label, value]) => ({ label, value: round2(value) })),

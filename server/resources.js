@@ -395,20 +395,50 @@ R.incomes = {
     F('contract_id', 'Contrato', 'ref', { ref: 'contracts' }),
     F('category', 'Categoria', 'option', { opt: 'receita', filter: true }),
     F('supplier_id', 'Fornecedor (se RT/comissão)', 'ref', { ref: 'suppliers' }),
+    F('nature', 'Tipo de entrada', 'select', { list: 'INCOME_NATURE', default: 'honorarios', required: true, filter: true,
+      hint: 'Recursos de cliente para repasse e reembolsos entram no caixa, mas não contam como honorários.' }),
     F('amount', 'Valor', 'money', { required: true }), F('due_date', 'Vencimento', 'date', { required: true, default: '$today' }),
-    F('paid_at', 'Data do pagamento', 'date'), F('method', 'Forma de pagamento', 'select', { list: 'PAYMENT_METHODS' }),
-    F('installment_no', 'Parcela nº', 'number', { default: 1 }), F('installment_total', 'Total de parcelas', 'number', { default: 1 }),
+    F('paid_at', 'Data do pagamento', 'date'), F('method', 'Forma de pagamento', 'select', { list: 'PAYMENT_METHODS', more: true }),
+    F('account', 'Conta do escritório', 'option', { opt: 'conta', more: true, placeholder: 'Conta principal' }),
+    F('advance_expense_id', 'Adiantamento reembolsado', 'ref', { ref: 'advances', showIf: { nature: ['reembolso'] }, hint: 'Pagamento que o escritório adiantou e que este valor reembolsa.' }),
+    F('installment_no', 'Parcela nº', 'number', { default: 1, more: true }), F('installment_total', 'Total de parcelas', 'number', { default: 1, more: true }),
     F('status', 'Status', 'select', { list: 'INCOME_STATUS', default: 'a_receber', filter: true }),
-    F('notes', 'Observações', 'textarea', { wide: true }),
+    F('notes', 'Observações', 'textarea', { wide: true, more: true, placeholder: 'Ex.: combinado por WhatsApp em 10/03' }),
   ],
   columns: ['due_date', 'description', 'client_name', 'project_name', 'installment_no', 'amount', 'paid_at', 'status'],
   read: financeRead, write: financeRead,
   beforeCreate: (d, u) => { d.created_by = u.id; },
   beforeSave: (d, row) => {
+    if ('nature' in d && !['honorarios', 'repasse', 'reembolso'].includes(d.nature)) d.nature = 'honorarios';
+    if ('nature' in d && d.nature !== 'reembolso') d.advance_expense_id = null;
+    if ('account' in d && !d.account) d.account = null;
     finance.normalize('incomes', d, row || {});
     if (d.project_id && !d.client_id && !(row && row.client_id)) { const p = get('SELECT client_id FROM projects WHERE id = ?', d.project_id); if (p) d.client_id = p.client_id; }
   },
 };
+
+// Origem/destino reais de uma saída: despesa própria do escritório × item de obra (custo do cliente).
+// Item de obra pago diretamente pelo cliente nunca movimenta o caixa do escritório.
+function classifyExpense(d, row, body = {}) {
+  const m = { ...row, ...d };
+  // pago pelo cliente nunca é despesa do escritório
+  if (!body.flow && d.paid_by === 'cliente') { m.flow = 'obra'; d.flow = 'obra'; }
+  const flow = m.flow === 'obra' ? 'obra' : 'escritorio';
+  if ('flow' in d || !row.id) d.flow = flow;
+  if (flow === 'escritorio') { d.paid_by = 'escritorio'; d.funding = null; }
+  else {
+    if (!['cliente', 'escritorio'].includes(m.paid_by)) throw new HttpError(400, 'Informe quem paga este item da obra: o cliente (direto ao fornecedor) ou o escritório.');
+    if (!m.project_id && !m.work_id) throw new HttpError(400, 'Item da obra precisa estar ligado a um projeto ou obra.');
+    if ('paid_by' in d || 'funding' in d || 'flow' in d) {
+      if (m.paid_by === 'cliente') { d.paid_by = 'cliente'; d.funding = null; d.account = null; }
+      else { d.paid_by = 'escritorio'; d.funding = ['repasse', 'adiantamento', 'proprio'].includes(m.funding) ? m.funding : 'adiantamento'; }
+    }
+  }
+  if (!m.due_date && flow === 'escritorio') throw new HttpError(400, 'Informe o vencimento.');
+  if ('due_date' in d && !d.due_date) d.due_date = null;
+  if ('account' in d && !d.account) d.account = null;
+  if ('client_visible' in d) d.client_visible = Number(d.client_visible) ? 1 : 0;
+}
 
 R.expenses = {
   table: 'expenses', alias: 'e', label: 'Saídas', singular: 'Saída', module: 'financeiro',
@@ -418,25 +448,46 @@ R.expenses = {
            LEFT JOIN works w ON w.id = e.work_id LEFT JOIN users u ON u.id = e.responsible_id`,
   search: ['e.description', 's.company', 'p.name', 'e.category'], sort: 'e.due_date ASC', dateField: 'due_date',
   fields: [
-    F('description', 'Descrição', 'text', { required: true, wide: true }),
+    F('flow', 'Tipo de saída', 'select', { list: 'EXPENSE_FLOW', default: 'escritorio', required: true, filter: true,
+      hint: 'Item da obra = custo do cliente (fornecedor, material, mão de obra). Só sai do caixa se o escritório pagar.' }),
+    F('description', 'Descrição', 'text', { required: true, wide: true, placeholder: 'Ex.: Marcenaria — cozinha' }),
     F('supplier_id', 'Fornecedor', 'ref', { ref: 'suppliers', filter: true }), F('category', 'Categoria', 'option', { opt: 'despesa', filter: true }),
-    F('project_id', 'Projeto relacionado', 'ref', { ref: 'projects', filter: true }), F('work_id', 'Obra relacionada', 'ref', { ref: 'works' }),
-    F('amount', 'Valor', 'money', { required: true }), F('due_date', 'Vencimento', 'date', { required: true, default: '$today' }),
-    F('paid_at', 'Data do pagamento', 'date'), F('method', 'Forma de pagamento', 'select', { list: 'PAYMENT_METHODS' }),
-    F('responsible_id', 'Responsável', 'ref', { ref: 'users', default: '$me' }),
-    F('paid_by', 'Quem paga', 'select', { list: 'PAID_BY', default: 'escritorio' }),
+    F('project_id', 'Projeto relacionado', 'ref', { ref: 'projects', filter: true }), F('work_id', 'Obra relacionada', 'ref', { ref: 'works', more: true }),
+    F('paid_by', 'Quem paga', 'select', { list: 'PAID_BY', default: 'escritorio', required: true, showIf: { flow: ['obra'] } }),
+    F('funding', 'Com qual dinheiro', 'select', { list: 'FUNDING', showIf: { flow: ['obra'], paid_by: ['escritorio'] } }),
+    F('amount', 'Valor', 'money', { required: true }), F('due_date', 'Vencimento', 'date', { default: '$today', hint: 'Deixe em branco quando for “na finalização — data a definir”.' }),
+    F('stage_label', 'Etapa / parcela', 'text', { showIf: { flow: ['obra'] }, placeholder: 'Ex.: Entrada, Intermediária, Finalização' }),
+    F('paid_at', 'Data do pagamento', 'date'), F('method', 'Forma de pagamento', 'select', { list: 'PAYMENT_METHODS', more: true }),
+    F('account', 'Conta do escritório', 'option', { opt: 'conta', more: true, placeholder: 'Conta principal' }),
+    F('payee', 'Quem recebeu', 'text', { more: true, placeholder: 'Se diferente do fornecedor cadastrado' }),
+    F('client_visible', 'Mostrar ao cliente no portal', 'bool', { default: 1, more: true, showIf: { flow: ['obra'] } }),
+    F('responsible_id', 'Responsável', 'ref', { ref: 'users', default: '$me', more: true }),
     F('status', 'Status', 'select', { list: 'EXPENSE_STATUS', default: 'a_pagar', filter: true }),
-    F('installment_no', 'Parcela nº', 'number', { default: 1 }), F('installment_total', 'Total de parcelas', 'number', { default: 1 }),
-    F('notes', 'Observações', 'textarea', { wide: true }),
+    F('installment_no', 'Parcela nº', 'number', { default: 1, more: true }), F('installment_total', 'Total de parcelas', 'number', { default: 1, more: true }),
+    F('notes', 'Observações', 'textarea', { wide: true, more: true }),
   ],
   columns: ['due_date', 'description', 'supplier_name', 'category', 'project_name', 'amount', 'paid_at', 'status'],
   read: financeRead, write: financeRead,
   beforeCreate: (d, u) => { d.created_by = u.id; },
-  beforeSave: (d, row) => {
+  beforeSave: (d, row, u, body) => {
+    classifyExpense(d, row || {}, body || {});
     finance.normalize('expenses', d, row || {});
     if (d.work_id && !d.project_id && !(row && row.project_id)) d.project_id = workProject(d.work_id);
   },
 };
+
+// histórico financeiro das alterações feitas pelo formulário
+const WATCH = ['amount', 'due_date', 'paid_at', 'status', 'flow', 'paid_by', 'funding', 'nature', 'account', 'project_id', 'supplier_id'];
+function financeHistory(table) {
+  return (id, d, u, created, body, row) => {
+    const M = require('./services/money');
+    if (created) return M.event(table, id, 'criado', { user: u, summary: `Lançamento criado: ${d.description || ''} · ${Number(d.amount || 0).toFixed(2)}` });
+    const ch = WATCH.filter((k) => k in d && String(d[k] ?? '') !== String(row[k] ?? ''));
+    if (ch.length) M.event(table, id, 'editado', { user: u, summary: `Alterado: ${ch.join(', ')}`, data: { before: Object.fromEntries(ch.map((k) => [k, row[k]])), after: Object.fromEntries(ch.map((k) => [k, d[k]])) } });
+  };
+}
+R.incomes.afterSave = financeHistory('incomes');
+R.expenses.afterSave = financeHistory('expenses');
 
 R.recurring_expenses = {
   table: 'recurring_expenses', alias: 'r', label: 'Despesas recorrentes', singular: 'Despesa recorrente', module: 'financeiro',
@@ -615,6 +666,10 @@ R.incomes.presets = {
 R.expenses.presets = {
   abertas: "x.status IN ('previsto','a_pagar','vencido')", vencidas: "x.status = 'vencido'", pagas: "x.status = 'pago'",
   mes: `substr(x.due_date,1,7) = strftime('%Y-%m', ${T})`,
+  // caixa do escritório: só o que é (ou será) pago pelo escritório
+  caixa_abertas: "x.paid_by = 'escritorio' AND x.status IN ('previsto','a_pagar','vencido')", caixa_vencidas: "x.paid_by = 'escritorio' AND x.status = 'vencido'",
+  caixa_mes: `x.paid_by = 'escritorio' AND substr(x.due_date,1,7) = strftime('%Y-%m', ${T})`, caixa_pagas: "x.paid_by = 'escritorio' AND x.status = 'pago'", caixa: "x.paid_by = 'escritorio'",
+  obra: "x.flow = 'obra'", adiantamentos: "x.flow = 'obra' AND x.paid_by = 'escritorio' AND x.funding = 'adiantamento' AND x.status <> 'cancelado'",
 };
 R.proposals.presets = { abertas: "x.status IN ('elaboracao','enviada')", aguardando: "x.status = 'enviada'", honorarios: "x.kind = 'honorarios'", simples: "COALESCE(x.kind,'simples') <> 'honorarios'",
   honorarios_abertas: "x.kind = 'honorarios' AND x.status IN ('elaboracao','enviada')", simples_abertas: "COALESCE(x.kind,'simples') <> 'honorarios' AND x.status IN ('elaboracao','enviada')" };

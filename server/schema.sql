@@ -319,7 +319,7 @@ CREATE TABLE IF NOT EXISTS expenses (
   description TEXT NOT NULL,
   category TEXT,
   amount REAL NOT NULL,
-  due_date TEXT NOT NULL,
+  due_date TEXT,
   paid_at TEXT,
   method TEXT,
   responsible_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -502,7 +502,22 @@ CREATE TABLE IF NOT EXISTS approval_events (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Histórico das movimentações financeiras (pagamentos, estornos, conferências e reclassificações)
+CREATE TABLE IF NOT EXISTS finance_events (
+  id INTEGER PRIMARY KEY,
+  table_name TEXT NOT NULL,
+  record_id INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor TEXT,                 -- escritorio | cliente | sistema
+  summary TEXT,
+  data TEXT,
+  reason TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Índices
+CREATE INDEX IF NOT EXISTS ix_finance_events ON finance_events(table_name, record_id);
 CREATE INDEX IF NOT EXISTS ix_approvals_project ON approvals(project_id, status);
 CREATE INDEX IF NOT EXISTS ix_approval_events ON approval_events(approval_id);
 CREATE INDEX IF NOT EXISTS ix_projects_client ON projects(client_id);

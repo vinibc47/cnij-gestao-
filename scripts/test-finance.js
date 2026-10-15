@@ -1,0 +1,186 @@
+// Testes da separação financeira: Caixa do escritório × Financeiro das obras.
+//   node scripts/test-finance.js
+process.env.TZ = 'America/Campo_Grande';
+const fs = require('fs'); const os = require('os'); const path = require('path');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnij-fin-'));
+process.env.DB_FILE = path.join(tmp, 'test.sqlite'); process.env.BACKUP_DIR = path.join(tmp, 'bk'); process.env.UPLOAD_DIR = path.join(tmp, 'up');
+const origLog = console.log; console.log = (...a) => { if (!String(a[0]).includes('e-mail não enviado')) origLog(...a); };
+const app = require('../server');
+const { get, all, run } = require('../server/db');
+const client = require('./client');
+const pad = (n) => String(n).padStart(2, '0');
+const D = (o) => { const d = new Date(); d.setDate(d.getDate() + o); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+let pass = 0; let failN = 0;
+const ok = (c, m) => { if (c) { pass++; origLog('  ✓', m); } else { failN++; origLog('  ✗', m); } };
+const rejects = async (p, st, m) => { try { await p; ok(false, m + ' (deveria falhar)'); } catch (e) { ok(!st || e.status === st, `${m} → ${e.status}`); return e; } };
+const near = (a, b) => Math.abs(a - b) < 0.005;
+
+(async () => {
+  const server = app.listen(0); const base = `http://127.0.0.1:${server.address().port}`;
+  const A = client(base); const PW = 'Teste1234';
+  await A.post('/setup', { name: 'Irineu', email: 'a@t.com', password: PW }); await A.post('/auth/login', { email: 'a@t.com', password: PW });
+  await A.put('/admin/settings', { opening_balance: '10000', opening_balance_date: '2000-01-01' });
+  const c1 = await A.post('/r/clients', { name: 'Cliente Um' }); const c2 = await A.post('/r/clients', { name: 'Cliente Dois' });
+  const p1 = await A.post('/r/projects', { name: 'Casa Um', client_id: c1.id }); const p2 = await A.post('/r/projects', { name: 'Casa Dois', client_id: c2.id });
+  const s1 = await A.post('/r/suppliers', { company: 'Marcenaria Silva' });
+  await A.post('/admin/users', { name: 'Um', email: 'u1@t.com', role: 'cliente', client_id: c1.id, password: PW });
+  await A.post('/admin/users', { name: 'Dois', email: 'u2@t.com', role: 'cliente', client_id: c2.id, password: PW });
+  const C1 = client(base); await C1.post('/auth/login', { email: 'u1@t.com', password: PW });
+  const C2 = client(base); await C2.post('/auth/login', { email: 'u2@t.com', password: PW });
+  const cash = (q = '') => A.get(`/finance/cash?from=2000-01-01&to=${D(0)}${q}`);
+  const saldo0 = (await cash()).kpis.saldo;
+  ok(near(saldo0, 10000), 'saldo inicial cadastrado entra no caixa');
+
+  origLog('\nCliente paga diretamente ao fornecedor');
+  const items = await A.post(`/finance/works/${p1.id}/items`, { service: 'Marcenaria', supplier_id: s1.id, total: 10000, mode: 'etapas', paid_by: 'cliente',
+    stages: [{ label: 'Entrada', amount: 5000, due_date: D(0) }, { label: 'Finalização', amount: 5000, due_date: null }] });
+  ok(items.ids.length === 2, 'item da obra lançado em 2 etapas (Entrada e Finalização)');
+  const fin = get('SELECT * FROM expenses WHERE id = ?', items.ids[1]);
+  ok(fin.due_date === null && fin.stage_label === 'Finalização' && fin.flow === 'obra', 'finalização sem data fica “a definir”');
+  let w = await A.get(`/finance/works/${p1.id}`);
+  ok(w.groups[0].parcels[1].due_label === 'Na finalização — data a definir', 'obra mostra “Na finalização — data a definir”');
+  ok((await cash()).kpis.a_pagar === 0, 'item pago pelo cliente não entra no “a pagar” do escritório');
+  await A.post(`/finance/expenses/${items.ids[0]}/pay`, { amount: 5000, paid_at: D(0), payer: 'cliente' });
+  let k = (await cash()).kpis;
+  ok(near(k.saldo, saldo0) && k.saidas === 0, 'cliente pagou ao fornecedor → saldo do escritório inalterado');
+  w = await A.get(`/finance/works/${p1.id}`);
+  ok(w.totals.pago === 5000 && w.totals.pago_cliente === 5000 && w.totals.a_pagar === 5000, 'obra: pago 5.000 pelo cliente, falta 5.000');
+  ok(w.groups[0].parcels[0].status_label === 'Pago diretamente pelo cliente', 'situação “Pago diretamente pelo cliente”');
+  const dash = await A.get('/dashboard');
+  ok(near(dash.finance.balance, saldo0), 'cartões do dashboard usam só o caixa do escritório');
+
+  origLog('\nHonorários');
+  const hon = await A.post('/r/incomes', { description: 'Honorários parcela 1', client_id: c1.id, project_id: p1.id, amount: 3000, due_date: D(0) });
+  ok(get('SELECT nature FROM incomes WHERE id = ?', hon.id).nature === 'honorarios', 'entrada padrão = honorários');
+  await A.post(`/finance/incomes/${hon.id}/pay`, { paid_at: D(0) });
+  k = (await cash()).kpis;
+  ok(near(k.saldo, saldo0 + 3000) && k.entradas_por_tipo.honorarios === 3000, 'honorários entram no caixa ligados a cliente e projeto');
+  const pc = (await cash(`&project_id=${p1.id}`)).rows;
+  ok(pc.some((r) => r.tbl === 'incomes' && r.id === hon.id && r.party === 'Cliente Um' && r.project_name === 'Casa Um'), 'extrato filtrado por projeto mostra a entrada');
+
+  origLog('\nEscritório paga fornecedor (repasse e adiantamento)');
+  const rep = await A.post('/r/incomes', { description: 'Recurso para pagar o gesso', client_id: c1.id, project_id: p1.id, amount: 4000, due_date: D(0), nature: 'repasse', paid_at: D(0) });
+  const g = await A.post(`/finance/works/${p1.id}/items`, { service: 'Gesso', total: 4000, mode: 'unica', paid_by: 'escritorio', funding: 'repasse', first_due: D(0) });
+  await A.post(`/finance/expenses/${g.ids[0]}/pay`, { amount: 4000, paid_at: D(0), payer: 'escritorio', funding: 'repasse', funding_income_id: rep.id });
+  k = (await cash()).kpis;
+  ok(near(k.saldo, saldo0 + 3000) && k.entradas_por_tipo.repasse === 4000 && k.saidas_por_tipo.obra_repasse === 4000, 'repasse: entra e sai do caixa, mostrado separado dos honorários');
+  const exRows = (await cash()).rows.filter((r) => r.tbl === 'expenses' && r.id === g.ids[0]);
+  ok(exRows.length === 1 && exRows[0].project_id === p1.id, 'pagamento do escritório aparece uma vez no caixa, ligado à obra (sem duplicar)');
+  w = await A.get(`/finance/works/${p1.id}`);
+  ok(w.groups.find((x) => x.service === 'Gesso').parcels[0].status_label === 'Pago pelo escritório' && w.pass_through.repasse_saldo === 0, 'mesmo registro na obra: “Pago pelo escritório”; saldo de repasse zerado');
+  const adv = await A.post(`/finance/works/${p1.id}/items`, { service: 'Vidraçaria', total: 1500, mode: 'unica', paid_by: 'escritorio', funding: 'adiantamento', first_due: D(0) });
+  await A.post(`/finance/expenses/${adv.ids[0]}/pay`, { amount: 1500, paid_at: D(0), payer: 'escritorio', funding: 'adiantamento' });
+  await A.post('/r/incomes', { description: 'Reembolso vidraçaria', client_id: c1.id, project_id: p1.id, amount: 1500, due_date: D(0), nature: 'reembolso', advance_expense_id: adv.ids[0], paid_at: D(0) });
+  k = (await cash()).kpis; w = await A.get(`/finance/works/${p1.id}`);
+  ok(k.entradas_por_tipo.reembolso === 1500 && k.entradas_por_tipo.honorarios === 3000 && k.saidas_por_tipo.obra_adiantamento === 1500, 'reembolso separado de honorários e de repasse');
+  ok(w.pass_through.adiantado === 1500 && w.pass_through.a_reembolsar === 0, 'adiantamento reembolsado: nada a reembolsar');
+  const prof = (await A.get(`/projects/${p1.id}/overview`)).profitability;
+  ok(prof.received === 3000 && prof.work_costs === 0, 'rentabilidade: só honorários são receita; repasse/adiantamento não são custo');
+
+  origLog('\nPagamento parcial');
+  const pp = await A.post(`/finance/works/${p1.id}/items`, { service: 'Pintura', total: 2000, mode: 'unica', paid_by: 'cliente', first_due: D(5) });
+  const r1 = await A.post(`/finance/expenses/${pp.ids[0]}/pay`, { amount: 800, paid_at: D(0), payer: 'cliente' });
+  const rest = get('SELECT * FROM expenses WHERE id = ?', r1.rest_id);
+  ok(rest && near(rest.amount, 1200) && rest.split_from === pp.ids[0] && rest.status !== 'pago', 'pagamento parcial: restante 1.200 em aberto na mesma parcela');
+  w = await A.get(`/finance/works/${p1.id}`); const gp = w.groups.find((x) => x.service === 'Pintura');
+  ok(gp.paid === 800 && gp.remaining === 1200 && gp.parcels.length === 2, 'grupo da pintura: pago 800, falta 1.200');
+  await rejects(A.post(`/finance/expenses/${pp.ids[0]}/pay`, { amount: 800, paid_at: D(0) }), 409, 'registrar de novo o mesmo pagamento é bloqueado (sem duplicidade)');
+  await rejects(A.post(`/finance/expenses/${rest.id}/pay`, { amount: 5000, paid_at: D(0) }), 400, 'valor maior que o aberto é recusado');
+  await rejects(A.post(`/finance/expenses/${rest.id}/pay`, { amount: 100, paid_at: D(3) }), 400, 'data futura é recusada');
+
+  origLog('\nCorreção / estorno com histórico');
+  const before = (await cash()).kpis;
+  await rejects(A.post(`/finance/incomes/${hon.id}/unpay`, {}), 400, 'estorno exige motivo');
+  await A.post(`/finance/incomes/${hon.id}/unpay`, { reason: 'lançado na parcela errada' });
+  let after = (await cash()).kpis;
+  ok(near(after.saldo, before.saldo - 3000) && near(after.a_receber, before.a_receber + 3000), 'estorno: KPIs e extrato voltam a ficar coerentes');
+  await A.post(`/finance/incomes/${hon.id}/pay`, { paid_at: D(0) });
+  after = (await cash()).kpis;
+  ok(near(after.saldo, before.saldo) && all('SELECT id FROM incomes WHERE description = ?', 'Honorários parcela 1').length === 1, 'novo registro sem duplicar o lançamento');
+  const h = await A.get(`/finance/incomes/${hon.id}/history`);
+  ok(h.some((e) => e.action === 'estornado' && e.reason === 'lançado na parcela errada') && h.filter((e) => e.action === 'pago').length === 2, 'histórico guarda estorno, motivo e novos registros');
+  await rejects(A.del(`/r/incomes/${hon.id}`), 400, 'pagamento registrado não pode ser excluído');
+  await A.post(`/finance/expenses/${pp.ids[0]}/unpay`, { reason: 'teste' });
+  ok(near(get('SELECT amount FROM expenses WHERE id = ?', pp.ids[0]).amount, 2000) && get('SELECT status FROM expenses WHERE id = ?', rest.id).status === 'cancelado', 'estorno de parcial reúne o restante na parcela original');
+
+  origLog('\nCliente informa pagamento');
+  const ov1 = await C1.get('/portal/overview');
+  const wp = ov1.finance.works.find((x) => x.project_id === p1.id);
+  ok(wp && wp.groups.length >= 3 && !('pass_through' in wp) && wp.groups.every((gg) => gg.parcels.every((x) => x.funding === null && x.notes === null)), 'portal: fornecedores e serviços da obra sem dados internos');
+  ok(ov1.finance.installments.every((i) => (i.nature || 'honorarios') === 'honorarios') && ov1.finance.client_funds.length === 2, 'portal separa honorários de repasses/reembolsos');
+  const fd = new FormData(); fd.append('amount', '5000'); fd.append('date', D(0)); fd.append('note', 'Pix'); fd.append('files', new Blob([Buffer.from('%PDF-1.4 comprovante')], { type: 'application/pdf' }), 'comprovante.pdf');
+  await C1.upload(`/portal/payments/expenses/${items.ids[1]}/inform`, fd);
+  const inf = get('SELECT * FROM expenses WHERE id = ?', items.ids[1]);
+  ok(inf.status !== 'pago' && inf.informed_at && inf.informed_doc_id, 'comprovante enviado → “aguardando conferência”, nunca pago automaticamente');
+  w = await A.get(`/finance/works/${p1.id}`);
+  ok(w.groups[0].parcels[1].status_label === 'Pagamento informado — aguardando conferência', 'situação “Pagamento informado — aguardando conferência”');
+  await rejects(C1.upload(`/portal/payments/expenses/${items.ids[1]}/inform`, (() => { const f = new FormData(); f.append('amount', '5000'); return f; })()), 409, 'informar duas vezes é bloqueado');
+  ok(get("SELECT COUNT(*) n FROM notifications WHERE kind = 'pagamento_informado'").n >= 1, 'escritório é avisado para conferir');
+  await A.post(`/finance/expenses/${items.ids[1]}/pay`, { amount: 5000, paid_at: D(0), payer: 'cliente' });
+  const conf = get('SELECT * FROM expenses WHERE id = ?', items.ids[1]);
+  ok(conf.status === 'pago' && conf.confirmed_by && conf.confirmed_at && !conf.informed_at, 'escritório confirma: registra quem e quando confirmou');
+  ok((await A.get(`/finance/expenses/${items.ids[1]}/history`)).some((e) => e.action === 'informado' && e.actor === 'cliente'), 'histórico guarda quem informou');
+  const hon2 = await A.post('/r/incomes', { description: 'Honorários parcela 2', client_id: c1.id, project_id: p1.id, amount: 3000, due_date: D(10) });
+  const fd2 = new FormData(); fd2.append('amount', '3000'); fd2.append('date', D(0));
+  await C1.upload(`/portal/payments/incomes/${hon2.id}/inform`, fd2);
+  ok((await A.get('/finance/informed')).some((x) => x.tbl === 'incomes' && x.id === hon2.id), 'honorário informado aparece na fila de conferência');
+  await A.post(`/finance/incomes/${hon2.id}/reject-informed`, { reason: 'não localizado no extrato' });
+  ok(!get('SELECT informed_at FROM incomes WHERE id = ?', hon2.id).informed_at && get('SELECT status FROM incomes WHERE id = ?', hon2.id).status !== 'recebido', 'aviso recusado: parcela continua em aberto');
+
+  origLog('\nAprovação ≠ pagamento');
+  const q = await A.post('/r/quotes', { project_id: p1.id, supplier_id: s1.id, item: 'Iluminação', amount: 7000, client_visible: 1 });
+  const nExp = get('SELECT COUNT(*) n FROM expenses').n;
+  await C1.post(`/portal/quotes/${q.id}/select`, {});
+  ok(get('SELECT COUNT(*) n FROM expenses').n === nExp, 'aprovar orçamento não cria pagamento');
+  w = await A.get(`/finance/works/${p1.id}`);
+  ok(w.approved_without_parcels.some((x) => x.quote_id === q.id) && !w.pending_quotes.some((x) => x.id === q.id), 'orçamento aprovado entra no contratado (sem parcelas ainda)');
+  const q2 = await A.post('/r/quotes', { project_id: p1.id, item: 'Paisagismo', amount: 9000, client_visible: 1 });
+  w = await A.get(`/finance/works/${p1.id}`);
+  ok(w.pending_quotes.some((x) => x.id === q2.id) && !w.approved_without_parcels.some((x) => x.quote_id === q2.id), 'orçamento aguardando aprovação fica à parte, fora dos totais');
+  await A.post(`/quotes/${q.id}/to-expense`, { total: 7000, mode: 'unica', first_due: D(15) });
+  const qe = get('SELECT * FROM expenses WHERE quote_id = ?', q.id);
+  ok(qe.flow === 'obra' && qe.paid_by === 'cliente', 'contratar orçamento lança item da obra (padrão: cliente paga direto)');
+
+  origLog('\nIsolamento entre clientes');
+  const it2 = await A.post(`/finance/works/${p2.id}/items`, { service: 'Piso', total: 3000, mode: 'unica', paid_by: 'cliente', first_due: D(3) });
+  const ov2 = await C2.get('/portal/overview');
+  ok(ov2.finance.works.every((x) => x.project_id === p2.id) && !JSON.stringify(ov2).includes('Marcenaria'), 'cada cliente vê apenas os próprios dados');
+  await rejects(C2.upload(`/portal/payments/expenses/${items.ids[0]}/inform`, (() => { const f = new FormData(); f.append('amount', '1'); return f; })()), 404, 'cliente não informa pagamento de outro cliente');
+  await rejects(C1.upload(`/portal/payments/expenses/${it2.ids[0]}/inform`, (() => { const f = new FormData(); f.append('amount', '1'); return f; })()), 404, 'nem de outro projeto');
+  await rejects(C1.get('/finance/cash'), 403, 'cliente não acessa o caixa do escritório');
+
+  origLog('\nConferência de lançamentos antigos');
+  // simula dados antigos: pagamento direto do cliente salvo como despesa do escritório
+  const old1 = await A.post('/r/expenses', { description: 'Marmoraria (antigo)', supplier_id: s1.id, project_id: p1.id, category: 'Obra', amount: 2500, due_date: D(-20), paid_at: D(-20) });
+  const old2 = await A.post('/r/expenses', { description: 'Aluguel', category: 'Aluguel', amount: 1800, due_date: D(-20), paid_at: D(-20) });
+  const docUp = new FormData(); docUp.append('files', new Blob([Buffer.from('%PDF-1.4')], { type: 'application/pdf' }), 'nf.pdf'); docUp.append('entity', 'expenses'); docUp.append('entity_id', String(old1.id));
+  await A.upload('/files', docUp);
+  const rv = await A.get('/finance/review');
+  const cand = rv.expenses.find((x) => x.id === old1.id);
+  ok(cand && cand.evidence.length && !rv.expenses.some((x) => x.id === old2.id), 'candidato listado com evidências; despesa própria não é listada');
+  ok(cand.proposed.includes('a conferir'), 'nada é presumido: quem pagou fica “a conferir”');
+  const kb = (await cash()).kpis; const nInc = get('SELECT COUNT(*) n FROM incomes').n; const nEx = get('SELECT COUNT(*) n FROM expenses').n;
+  const ap = await A.post('/finance/review/apply', { decisions: [{ table: 'expenses', id: old1.id, decision: 'cliente', note: 'cliente confirmou por WhatsApp' }] });
+  ok(fs.existsSync(path.join(tmp, 'bk', ap.backup)), `backup criado antes de reclassificar (${ap.backup})`);
+  const o1 = get('SELECT * FROM expenses WHERE id = ?', old1.id);
+  ok(o1.flow === 'obra' && o1.paid_by === 'cliente' && o1.amount === 2500 && o1.paid_at === D(-20) && o1.status === 'pago', 'reclassificado preservando valor, data e situação');
+  ok(get("SELECT COUNT(*) n FROM documents WHERE entity = 'expenses' AND entity_id = ?", old1.id).n === 1, 'comprovante preservado');
+  ok(get('SELECT COUNT(*) n FROM incomes').n === nInc && get('SELECT COUNT(*) n FROM expenses').n === nEx, 'nenhuma movimentação criada ou apagada');
+  const ka = (await cash()).kpis;
+  ok(near(ka.saldo, kb.saldo + 2500), 'saldo do escritório recalculado (+2.500 que não eram dele)');
+  ok(!(await A.get('/finance/review')).expenses.some((x) => x.id === old1.id), 'item conferido sai da lista');
+  ok((await A.get(`/finance/expenses/${old1.id}/history`)).some((e) => e.action === 'reclassificado' && e.data.before.paid_by === 'escritorio'), 'histórico guarda a classificação anterior');
+
+  origLog('\nFormulário e permissões');
+  await rejects(A.post('/r/expenses', { description: 'x', amount: 10, flow: 'obra' }), 400, 'item da obra sem projeto é recusado');
+  const cp = await A.post('/r/expenses', { description: 'Pago pelo cliente', amount: 900, due_date: D(0), project_id: p1.id, paid_by: 'cliente' });
+  ok(get('SELECT flow FROM expenses WHERE id = ?', cp.id).flow === 'obra', 'pago pelo cliente nunca vira despesa do escritório');
+  const own = await A.post('/r/expenses', { description: 'Internet', amount: 150, due_date: D(0), paid_by: 'cliente', flow: 'escritorio' });
+  ok(get('SELECT paid_by FROM expenses WHERE id = ?', own.id).paid_by === 'escritorio', 'despesa do escritório sempre sai do caixa');
+  const k3 = (await cash('&status=informado')); ok(Array.isArray(k3.rows), 'filtro de situação “informado” funciona');
+  const acc = await cash('&account=Conta%20principal'); ok(typeof acc.kpis.saldo === 'number' && acc.kpis.account === 'Conta principal', 'filtro por conta');
+
+  server.close();
+  origLog(`\n${pass} testes ok, ${failN} falha(s).`);
+  process.exit(failN ? 1 : 0);
+})().catch((e) => { origLog(e); process.exit(1); });

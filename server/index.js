@@ -68,6 +68,7 @@ app.use('/api/auth', auth.router);
 app.use('/api/portal', require('./routes/portal'));
 app.use('/api', auth.requireStaff);
 app.use('/api', require('./routes/core'));
+app.use('/api', require('./routes/money').router);
 app.use('/api', require('./routes/ops').router);
 app.use('/api', require('./routes/docs').router);
 app.use('/api', require('./routes/extra').router);

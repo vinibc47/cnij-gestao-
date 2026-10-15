@@ -57,6 +57,21 @@ const MIGRATIONS = {
   projects: { cover_doc_id: 'INTEGER', cover_x: 'REAL', cover_y: 'REAL', cover_zoom: 'REAL', cover_display: 'TEXT', next_step: 'TEXT', next_step_due: 'TEXT' },
   // materiais da aba "Veja seu projeto"
   documents: { showcase: 'INTEGER NOT NULL DEFAULT 0', portal_title: 'TEXT', portal_desc: 'TEXT', portal_group: 'TEXT', portal_order: 'INTEGER', replaced_by: 'INTEGER', published_at: 'TEXT' },
+  // separação financeira: caixa do escritório × financeiro das obras
+  expenses: {
+    flow: "TEXT NOT NULL DEFAULT 'escritorio'",   // escritorio = despesa própria · obra = custo/pagamento da obra
+    funding: 'TEXT',                               // quando o escritório paga item da obra: repasse | adiantamento | proprio
+    funding_income_id: 'INTEGER', account: 'TEXT', stage_label: 'TEXT', payee: 'TEXT', client_visible: 'INTEGER NOT NULL DEFAULT 1',
+    split_from: 'INTEGER', paid_registered_by: 'INTEGER', paid_registered_at: 'TEXT',
+    informed_at: 'TEXT', informed_by: 'INTEGER', informed_amount: 'REAL', informed_date: 'TEXT', informed_payer: 'TEXT', informed_doc_id: 'INTEGER', informed_note: 'TEXT',
+    confirmed_by: 'INTEGER', confirmed_at: 'TEXT',
+  },
+  incomes: {
+    nature: "TEXT NOT NULL DEFAULT 'honorarios'",  // honorarios (e receitas próprias) | repasse | reembolso
+    account: 'TEXT', advance_expense_id: 'INTEGER', split_from: 'INTEGER', paid_registered_by: 'INTEGER', paid_registered_at: 'TEXT',
+    informed_at: 'TEXT', informed_by: 'INTEGER', informed_amount: 'REAL', informed_date: 'TEXT', informed_payer: 'TEXT', informed_doc_id: 'INTEGER', informed_note: 'TEXT',
+    confirmed_by: 'INTEGER', confirmed_at: 'TEXT',
+  },
   contracts: { service_type: 'TEXT', template_id: 'INTEGER', template_version: 'INTEGER', body: 'TEXT', data: 'TEXT', payment_plan: 'TEXT' },
   works: { budget_notes: 'TEXT' },
   work_phases: { responsible: 'TEXT', pending: 'TEXT', next_action: 'TEXT' },
@@ -79,12 +94,38 @@ function relaxProposalClient() {
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; } finally { db.exec('PRAGMA foreign_keys = ON'); }
 }
+// Remove a obrigatoriedade de uma coluna recriando a tabela com os mesmos dados (o SQLite não altera restrições)
+function relaxNotNull(table, col) {
+  const c = all(`PRAGMA table_info(${table})`).find((x) => x.name === col);
+  if (!c || !c.notnull) return;
+  const sql = get("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", table).sql;
+  const re = new RegExp(`(\\b${col}\\s+\\w+)\\s+NOT\\s+NULL`, 'i');
+  const newSql = sql.replace(re, '$1').replace(new RegExp(`CREATE TABLE\\s+(IF NOT EXISTS\\s+)?"?${table}"?`, 'i'), `CREATE TABLE ${table}_mig`);
+  const cols = all(`PRAGMA table_info(${table})`).map((x) => x.name).join(', ');
+  const idx = all("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql IS NOT NULL", table).map((x) => x.sql);
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    db.exec('BEGIN');
+    db.exec(newSql);
+    db.exec(`INSERT INTO ${table}_mig (${cols}) SELECT ${cols} FROM ${table}`);
+    db.exec(`DROP TABLE ${table}`);
+    db.exec(`ALTER TABLE ${table}_mig RENAME TO ${table}`);
+    idx.forEach((x) => db.exec(x));
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; } finally { db.exec('PRAGMA foreign_keys = ON'); }
+}
 function migrate() {
   for (const [table, cols] of Object.entries(MIGRATIONS)) {
     const have = new Set(all(`PRAGMA table_info(${table})`).map((c) => c.name));
     for (const [col, def] of Object.entries(cols)) if (!have.has(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
   }
   relaxProposalClient();
+  relaxNotNull('expenses', 'due_date'); // parcelas "na finalização — data a definir"
+  // pagamentos já marcados como "pago pelo cliente" pertencem ao financeiro das obras (dado explícito, não presumido)
+  if (getSetting('mig_flow_v1') === null) {
+    run("UPDATE expenses SET flow = 'obra' WHERE paid_by = 'cliente'");
+    setSetting('mig_flow_v1', '1');
+  }
   // uma vez: imagens, vídeos e apresentações já liberadas continuam aparecendo na nova aba "Veja seu projeto"
   if (getSetting('mig_showcase_v1') === null) {
     run("UPDATE documents SET showcase = 1, published_at = COALESCE(published_at, created_at) WHERE client_visible = 1 AND (mime LIKE 'image/%' OR mime LIKE 'video/%' OR lower(COALESCE(category,'')) LIKE '%apresenta%') AND COALESCE(entity,'') NOT IN ('work_logs','incomes','quotes')");

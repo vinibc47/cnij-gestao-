@@ -1,7 +1,7 @@
 // ÁREA DO CLIENTE — cada cliente enxerga SOMENTE os próprios projetos e apenas
 // informações liberadas pelo escritório. Nada de custos, margens ou notas internas.
 const express = require('express');
-const { all, get, run } = require('../db');
+const { all, get, run, insert, tx } = require('../db');
 const { wrap, HttpError, audit, today, nowIso, round2 } = require('../util');
 const { sendFile } = require('./ops');
 
@@ -82,9 +82,19 @@ router.get('/overview', wrap((req, res) => {
     ];
     p.updates = ups.filter((u) => u.date).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 8);
   }
-  const incomes = all(`SELECT i.id, i.description, i.amount, i.due_date, i.paid_at, i.status, i.installment_no, i.installment_total, i.project_id, i.method
-                       FROM incomes i WHERE i.client_id = ? AND i.status <> 'cancelado' AND COALESCE(i.category,'') <> 'Reserva técnica (RT)' ORDER BY i.due_date`, cid)
-    .map((i) => ({ ...i, receipts: all("SELECT id, title, file_name FROM documents WHERE entity = 'incomes' AND entity_id = ? AND client_visible = 1 AND archived = 0", i.id) }));
+  const allIncomes = all(`SELECT i.id, i.description, i.amount, i.due_date, i.paid_at, i.status, i.installment_no, i.installment_total, i.project_id, i.method, i.nature,
+                         i.informed_at, i.informed_amount, i.informed_date
+                       FROM incomes i WHERE i.client_id = ? AND i.status <> 'cancelado' AND COALESCE(i.category,'') <> 'Reserva técnica (RT)' ORDER BY COALESCE(i.due_date, '9999')`, cid)
+    .map((i) => ({ ...i, receipts: all("SELECT id, title, file_name FROM documents WHERE entity = 'incomes' AND entity_id = ? AND client_visible = 1 AND archived = 0", i.id),
+      informed: i.informed_at && i.status !== 'recebido' ? { at: i.informed_at, amount: i.informed_amount, date: i.informed_date } : null }))
+    .map(({ informed_at, informed_amount, informed_date, ...i }) => i);
+  // honorários do escritório × recursos enviados para repasse / reembolsos (mostrados à parte)
+  const incomes = allIncomes.filter((i) => (i.nature || 'honorarios') === 'honorarios');
+  const clientFunds = allIncomes.filter((i) => ['repasse', 'reembolso'].includes(i.nature));
+  // fornecedores e serviços da obra: o que foi pago (por quem, a quem), o que falta e próximos vencimentos
+  const M = require('../services/money');
+  const works = projects.map((p) => { const w = M.worksFinance(p.id, { forClient: true }); return { project_id: p.id, project_name: p.name, ...w, project: undefined }; })
+    .filter((w) => w.groups.length || w.approved_without_parcels.length || w.pending_quotes.length);
   const receipts = all("SELECT id, number, amount, paid_at, income_id, project_id FROM receipts WHERE client_id = ? AND status = 'emitido' AND archived = 0 ORDER BY paid_at DESC", cid);
   incomes.forEach((i) => { i.receipt_docs = receipts.filter((r) => r.income_id === i.id); });
   const contracts = all("SELECT id, number, amount, signed_at, start_date, end_date, installments, status, project_id FROM contracts WHERE client_id = ? AND status <> 'cancelado'", cid);
@@ -95,7 +105,7 @@ router.get('/overview', wrap((req, res) => {
     finance: {
       contracted: round2(contracts.reduce((s, c) => s + c.amount, 0)) || round2(projects.reduce((s, p) => s + (p.contract_value || 0), 0)),
       paid: sum((i) => i.status === 'recebido'), pending: sum((i) => ['a_receber', 'previsto'].includes(i.status)), overdue: sum((i) => i.status === 'vencido'),
-      installments: incomes,
+      installments: incomes, client_funds: clientFunds, works,
     },
   });
 }));
@@ -106,6 +116,36 @@ router.post('/approvals/:id/decide', wrap((req, res) => {
   audit(req, 'client_decision', 'approvals', Number(req.params.id), `${req.body.action === 'ajustes' ? 'Ajustes solicitados' : 'Aprovação'} pelo cliente na Área do Cliente`);
   res.json({ ok: true, event_id: r.event_id });
 }));
+// Cliente informa um pagamento (com comprovante opcional). Fica "aguardando conferência":
+// o escritório confirma (ou recusa) — nunca é marcado como pago automaticamente.
+router.post('/payments/:table/:id/inform', (req, res, next) => require('./ops').upload.array('files', 3)(req, res, next), wrap((req, res) => {
+  const table = req.params.table === 'expenses' ? 'expenses' : req.params.table === 'incomes' ? 'incomes' : null;
+  const files = req.files || [];
+  const cleanup = () => files.forEach((f) => require('fs').unlink(f.path, () => {}));
+  if (!table) { cleanup(); throw new HttpError(400, 'Parcela inválida.'); }
+  const M = require('../services/money');
+  const id = Number(req.params.id);
+  const row = table === 'incomes' ? get('SELECT * FROM incomes WHERE id = ? AND client_id = ?', id, req.user.client_id)
+    : get("SELECT e.* FROM expenses e JOIN projects p ON p.id = e.project_id WHERE e.id = ? AND p.client_id = ? AND e.flow = 'obra' AND e.client_visible = 1", id, req.user.client_id);
+  if (!row) { cleanup(); throw new HttpError(404, 'Parcela não encontrada.'); }
+  let docId = null;
+  try {
+    tx(() => {
+      const { UPLOAD_DIR } = require('./ops'); const path = require('path');
+      files.forEach((f, i) => {
+        const name = Buffer.from(f.originalname, 'latin1').toString('utf8');
+        const did = insert('documents', { title: `Comprovante informado pelo cliente — ${row.description}`.slice(0, 200), category: 'Comprovantes', entity: table, entity_id: row.id,
+          project_id: row.project_id || null, client_id: req.user.client_id, file_path: path.relative(UPLOAD_DIR, f.path), file_name: name, mime: f.mimetype, size: f.size,
+          client_visible: 1, uploaded_by: req.user.id, created_at: nowIso() });
+        if (i === 0) docId = did;
+      });
+      M.informPayment(req.user, table, row.id, req.body || {}, docId);
+    });
+  } catch (e) { cleanup(); throw e; }
+  audit(req, 'inform_payment', table, row.id, 'Pagamento informado pelo cliente na Área do Cliente');
+  res.json({ ok: true });
+}));
+
 // capa do projeto (versão otimizada; o original fica preservado)
 router.get('/projects/:id/cover', wrap((req, res) => {
   const p = get('SELECT * FROM projects WHERE id = ? AND client_id = ?', Number(req.params.id), req.user.client_id);
