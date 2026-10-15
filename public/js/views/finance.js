@@ -1,17 +1,22 @@
-import { S, api, html, el, toHTML, icon, money, date, monthLabel, badge, label, list, drawer, modal, buildForm, readForm, validate, toast, fail, today, attachments, openForm, invalidateRefs, csvMoney, $, $$, isManager } from '../lib.js';
+import { S, api, html, raw, el, toHTML, icon, money, date, monthLabel, badge, label, list, drawer, modal, buildForm, readForm, validate, toast, fail, today, attachments, openForm, invalidateRefs, csvMoney, $, $$, isManager,
+  draftKey, draftGet, draftClear, draftWatch, draftBanner } from '../lib.js';
 import { barChart, lineChart } from '../charts.js';
 import { listPage, rowActions } from './common.js';
+import { areaHead, cashPage, worksPage, reviewPage, payDialog, reverseDialog, historyBox, obraItemDrawer } from './money.js';
 
-const TABS = [['', 'Visão geral'], ['entradas', 'Entradas'], ['saidas', 'Saídas'], ['lembretes', 'Lembretes de cobrança'], ['recorrentes', 'Despesas recorrentes'], ['fluxo', 'Fluxo de caixa']];
-
+// Financeiro em duas áreas:  CAIXA DO ESCRITÓRIO  ×  FINANCEIRO DAS OBRAS
 export default async function (ctx) {
   const sec = ctx.params[0] || '';
-  const tabs = html`<div class="tabs">${TABS.map(([k, l]) => html`<a href="#/financeiro${k ? '/' + k : ''}" class="${k === sec ? 'on' : ''}">${l}</a>`)}</div>`;
   const wrap = el('<div></div>'); ctx.root.appendChild(wrap);
-  if (sec === 'entradas' || sec === 'saidas') return entries(ctx, wrap, sec === 'entradas' ? 'incomes' : 'expenses', tabs);
-  if (sec === 'recorrentes') return recurring(ctx, wrap, tabs);
-  if (sec === 'lembretes') return reminders(ctx, wrap, tabs);
-  return overview(ctx, wrap, tabs, sec === 'fluxo');
+  const tabsFor = (k) => toHTML(areaHead('caixa', { tab: k })).replace(/^[\s\S]*?(<div class="fin-areas">)/, '$1');
+  const deps = { newEntry, entryDrawer };
+  if (sec === 'obras') return worksPage(ctx, wrap, deps);
+  if (sec === 'conferir') return reviewPage(ctx, wrap);
+  if (sec === 'entradas' || sec === 'saidas') return entries(ctx, wrap, sec === 'entradas' ? 'incomes' : 'expenses', tabsFor(sec));
+  if (sec === 'recorrentes') return recurring(ctx, wrap, tabsFor(sec));
+  if (sec === 'lembretes') return reminders(ctx, wrap, tabsFor(sec));
+  if (sec === 'fluxo' || sec === 'visao') return overview(ctx, wrap, tabsFor('fluxo'), true);
+  return cashPage(ctx, wrap, deps);
 }
 
 // ------------------------------ Visão geral / fluxo de caixa ------------------------------
@@ -21,11 +26,11 @@ async function overview(ctx, root, tabs, detailed) {
   const cur = today().slice(0, 7);
   const curRow = cf.months.find((m) => m.month === cur) || {};
   root.innerHTML = toHTML(html`
-    <div class="page-head"><div><h1>Financeiro</h1><div class="sub">Entradas, saídas, recorrências e fluxo de caixa do escritório</div></div>
-      <div class="row wrap"><button class="btn" data-new="expenses">${icon('out')} Nova despesa</button><button class="btn primary" data-new="incomes">${icon('in')} Nova receita</button></div></div>
-    ${tabs}
+    <div class="page-head"><div><div class="crumbs">Financeiro</div><h1>Caixa do escritório</h1><div class="sub">Fluxo de caixa: realizado e previsto das contas do escritório. Pagamentos diretos do cliente ao fornecedor não entram.</div></div>
+      <div class="row wrap"><button class="btn" data-new="expenses">${icon('out')} Nova despesa</button><button class="btn primary" data-new="incomes">${icon('in')} Nova entrada</button></div></div>
+    ${raw(tabs)}
     <div class="grid g4">
-      <div class="card kpi"><span class="label">Saldo atual</span><span class="value ${cf.balance < 0 ? 'danger-text' : ''}">${money(cf.balance)}</span><span class="foot">receitas recebidas − despesas pagas</span></div>
+      <div class="card kpi"><span class="label">Saldo atual</span><span class="value ${cf.balance < 0 ? 'danger-text' : ''}">${money(cf.balance)}</span><span class="foot">entradas recebidas − saídas pagas pelo escritório</span></div>
       <div class="card kpi"><span class="label">Entradas previstas no mês</span><span class="value">${money(curRow.in_prev)}</span><span class="foot">${money(curRow.in_real)} já recebidos</span></div>
       <div class="card kpi"><span class="label">Saídas previstas no mês</span><span class="value">${money(curRow.out_prev)}</span><span class="foot">${money(curRow.out_real)} já pagos</span></div>
       <div class="card kpi"><span class="label">Saldo projetado (fim do mês)</span><span class="value ${curRow.projected_balance < 0 ? 'danger-text' : ''}">${money(curRow.projected_balance)}</span><span class="foot">inclui vencidos em aberto</span></div>
@@ -33,7 +38,7 @@ async function overview(ctx, root, tabs, detailed) {
     <div class="grid g3 mt-16">${cf.horizons.map((h) => html`<div class="card"><div class="eyebrow">Previsão ${h.months} meses</div>
       <div class="serif mt-8" style="font-size:30px">${money(h.saldo)}</div>
       <div class="row between small mt-8"><span class="success-text">+ ${money(h.entradas)}</span><span class="danger-text">− ${money(h.saidas)}</span></div></div>`)}</div>
-    ${cf.overdue_in || cf.overdue_out ? html`<div class="card flat mt-16 row wrap between"><div class="row gap-8">${icon('alert')}<span>Valores vencidos: <b class="danger-text">${money(cf.overdue_in)}</b> a receber e <b>${money(cf.overdue_out)}</b> a pagar.</span></div><div class="row gap-8"><a class="btn sm" href="#/financeiro/entradas?preset=vencidas">Recebimentos vencidos</a><a class="btn sm" href="#/financeiro/saidas?preset=vencidas">Pagamentos vencidos</a></div></div>` : ''}
+    ${cf.overdue_in || cf.overdue_out ? html`<div class="card flat mt-16 row wrap between"><div class="row gap-8">${icon('alert')}<span>Valores vencidos: <b class="danger-text">${money(cf.overdue_in)}</b> a receber e <b>${money(cf.overdue_out)}</b> a pagar.</span></div><div class="row gap-8"><a class="btn sm" href="#/financeiro/entradas?preset=vencidas">Recebimentos vencidos</a><a class="btn sm" href="#/financeiro/saidas?preset=caixa_vencidas">Pagamentos vencidos</a></div></div>` : ''}
     <div class="grid g2 mt-16">
       <div class="card"><div class="card-head"><h3>Fluxo de caixa mensal</h3><span class="small muted">realizado + previsto</span></div><div data-c1></div></div>
       <div class="card"><div class="card-head"><h3>Saldo projetado</h3><span class="small muted">próximos 12 meses</span></div><div data-c2></div></div>
@@ -48,7 +53,7 @@ async function overview(ctx, root, tabs, detailed) {
     ${f ? html`<div class="grid g2 mt-16">
       <div class="card"><div class="card-head"><h3>A receber (próximos)</h3><a class="link" href="#/financeiro/entradas?preset=abertas">Ver todas →</a></div>
         <div class="list">${f.receivables.map((x) => html`<a class="list-item" href="#/financeiro/entradas?id=${x.id}"><div class="grow" style="min-width:0"><div class="li-title">${x.client_name || x.description}</div><div class="li-sub">${x.description}</div></div><div class="right"><b class="num" style="font-weight:500">${money(x.amount)}</b><div class="small ${x.status === 'vencido' ? 'late' : 'muted'}">${date(x.due_date)}</div></div></a>`)}</div></div>
-      <div class="card"><div class="card-head"><h3>A pagar (próximos 15 dias)</h3><a class="link" href="#/financeiro/saidas?preset=abertas">Ver todas →</a></div>
+      <div class="card"><div class="card-head"><h3>A pagar (próximos 15 dias)</h3><a class="link" href="#/financeiro/saidas?preset=caixa_abertas">Ver todas →</a></div>
         <div class="list">${f.payments_next.length ? f.payments_next.map((x) => html`<a class="list-item" href="#/financeiro/saidas?id=${x.id}"><div class="grow" style="min-width:0"><div class="li-title">${x.description}</div><div class="li-sub">${x.supplier_name || ''}</div></div><div class="right"><b class="num" style="font-weight:500">${money(x.amount)}</b><div class="small ${x.status === 'vencido' ? 'late' : 'muted'}">${date(x.due_date)}</div></div></a>`) : html`<div class="empty sm">Nada a pagar nos próximos dias.</div>`}</div></div></div>` : ''}`);
   const past = cf.months.filter((m) => m.month <= cur).slice(-6); const fut = cf.months.filter((m) => m.month > cur).slice(0, 6);
   const rng = [...past, ...fut];
@@ -67,34 +72,34 @@ async function entries(ctx, root, res, tabs) {
   const holder = el('<div></div>');
   root.innerHTML = '';
   const page = await listPage({
-    root: holder, res, title: 'Financeiro', sub: inc ? 'Entradas — receitas, parcelas de clientes e reservas técnicas' : 'Saídas — despesas, fornecedores e custos de obra', query: ctx.query,
+    root: holder, res, title: 'Caixa do escritório', crumbs: 'Financeiro', sub: inc ? 'Entradas — honorários, recursos de clientes para repasse e reembolsos' : 'Saídas pagas (ou a pagar) pelo escritório. Itens de obra pagos diretamente pelo cliente ficam em “Financeiro das obras”.', query: ctx.query,
     presets: inc ? [{ key: 'abertas', label: 'Em aberto' }, { key: 'vencidas', label: 'Vencidas' }, { key: 'mes', label: 'Vencem neste mês' }, { key: 'recebidas', label: 'Recebidas' }, { key: '', label: 'Todas' }]
-      : [{ key: 'abertas', label: 'Em aberto' }, { key: 'vencidas', label: 'Vencidas' }, { key: 'mes', label: 'Vencem neste mês' }, { key: 'pagas', label: 'Pagas' }, { key: '', label: 'Todas' }],
-    filters: inc ? ['client_id', 'project_id', 'category'] : ['supplier_id', 'category', 'project_id'],
-    newLabel: inc ? 'Nova receita' : 'Nova despesa', onNew: (reload) => newEntry(res, {}, reload), csvName: inc ? 'entradas' : 'saidas',
+      : [{ key: 'caixa_abertas', label: 'Em aberto' }, { key: 'caixa_vencidas', label: 'Vencidas' }, { key: 'caixa_mes', label: 'Vencem neste mês' }, { key: 'caixa_pagas', label: 'Pagas' }, { key: 'caixa', label: 'Todas' }],
+    filters: inc ? ['nature', 'client_id', 'project_id', 'category'] : ['flow', 'supplier_id', 'category', 'project_id'],
+    newLabel: inc ? 'Nova entrada' : 'Nova despesa', onNew: (reload) => newEntry(res, {}, reload), csvName: inc ? 'entradas' : 'saidas',
     columns: [
-      { key: 'due_date', label: 'Vencimento', cls: 'nw', render: (r) => html`<span class="${r.status === 'vencido' ? 'late' : ''}">${date(r.due_date)}</span>`, csv: (r) => date(r.due_date) },
-      { key: 'description', label: 'Descrição', render: (r) => html`<div class="cell-title">${r.description}</div><div class="cell-sub">${r.category || ''}</div>` },
-      inc ? { key: 'client_name', label: 'Cliente' } : { key: 'supplier_name', label: 'Fornecedor' },
+      { key: 'due_date', label: 'Vencimento', cls: 'nw', render: (r) => html`<span class="${r.status === 'vencido' ? 'late' : ''}">${r.due_date ? date(r.due_date) : html`<span class="muted">a definir</span>`}</span>`, csv: (r) => date(r.due_date) },
+      { key: 'description', label: 'Descrição', render: (r) => html`<div class="cell-title">${r.description}</div><div class="cell-sub">${inc ? label('INCOME_NATURE', r.nature || 'honorarios') : r.flow === 'obra' ? 'Pagamento de obra · ' + (label('FUNDING', r.funding) || 'escritório') : 'Despesa do escritório'}${r.category ? ' · ' + r.category : ''}</div>` },
+      inc ? { key: 'client_name', label: 'Cliente' } : { key: 'supplier_name', label: 'Fornecedor', render: (r) => r.payee || r.supplier_name || '—' },
       { key: 'project_name', label: 'Projeto / obra', render: (r) => r.project_name ? html`<a href="#/projetos/${r.project_id}">${r.project_name}</a>${r.work_name ? html`<div class="cell-sub">${r.work_name}</div>` : ''}` : '—' },
-      { key: 'installment_no', label: 'Parcela', render: (r) => (r.installment_total > 1 ? `${r.installment_no}/${r.installment_total}` : '—'), csv: (r) => `${r.installment_no}/${r.installment_total}` },
-      { key: 'amount', label: 'Valor', align: 'right', render: (r) => html`<span class="num">${money(r.amount)}</span>${!inc && r.paid_by === 'cliente' ? html`<div class="cell-sub">pago pelo cliente</div>` : ''}`, csv: (r) => csvMoney(r.amount) },
+      { key: 'installment_no', label: 'Parcela', render: (r) => r.stage_label || (r.installment_total > 1 ? `${r.installment_no}/${r.installment_total}` : '—'), csv: (r) => `${r.installment_no}/${r.installment_total}` },
+      { key: 'amount', label: 'Valor', align: 'right', render: (r) => html`<span class="num">${money(r.amount)}</span>`, csv: (r) => csvMoney(r.amount) },
       { key: 'paid_at', label: inc ? 'Recebido em' : 'Pago em', render: (r) => (r.paid_at ? date(r.paid_at) : '—'), csv: (r) => date(r.paid_at) },
-      { key: 'status', label: 'Status', cls: 'nw', render: (r) => html`${badge(lst, r.status)}${!['recebido', 'pago', 'cancelado'].includes(r.status) ? html` <button class="btn xs" data-pay="${r.id}">${paidLabel}</button>` : ''}`, csv: (r) => label(lst, r.status) },
+      { key: 'status', label: 'Status', cls: 'nw', render: (r) => html`${r.informed_at && !['recebido', 'pago'].includes(r.status) ? html`<span class="badge warning">Informado — conferir</span>` : badge(lst, r.status)}${!['recebido', 'pago', 'cancelado'].includes(r.status) ? html` <button class="btn xs" data-pay="${r.id}">${r.informed_at ? 'Conferir' : paidLabel}</button>` : ''}`, csv: (r) => label(lst, r.status) },
     ],
     onRow: (r) => entryDrawer(res, r.id, () => page.load()),
     actions: (r, reload) => rowActions(res, r, { onChange: reload, editOpts: { after: attachments(res, r.id, { title: 'Comprovantes e anexos' }) },
-      extra: [!['recebido', 'pago', 'cancelado'].includes(r.status) ? { label: inc ? 'Registrar recebimento' : 'Registrar pagamento', icon: 'check', fn: () => payModal(res, r, reload) } : { label: 'Estornar baixa', icon: 'refresh', fn: async () => { await api.post(`/finance/${res}/${r.id}/unpay`); toast('Baixa estornada.'); reload(); } }, '-'] }),
+      extra: [!['recebido', 'pago', 'cancelado'].includes(r.status) ? { label: inc ? 'Registrar recebimento' : 'Registrar pagamento', icon: 'check', fn: () => payDialog(res, r, reload) } : r.status !== 'cancelado' ? { label: 'Estornar', icon: 'refresh', fn: () => reverseDialog(res, r, reload) } : null, '-'].filter(Boolean) }),
     totals: (rows) => {
       const tot = rows.filter((r) => r.status !== 'cancelado').reduce((s, r) => s + r.amount, 0);
       const open = rows.filter((r) => !['recebido', 'pago', 'cancelado'].includes(r.status)).reduce((s, r) => s + r.amount, 0);
       return `Total ${money(tot)} · em aberto ${money(open)}`;
     },
     afterRender: (rows, state, reload) => {
-      holder.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); payModal(res, rows.find((r) => r.id == b.dataset.pay), reload); }));
+      holder.querySelectorAll('[data-pay]').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); payDialog(res, rows.find((r) => r.id == b.dataset.pay), reload); }));
     },
   });
-  const head = holder.querySelector('.page-head'); head.after(el(toHTML(tabs)));
+  const head = holder.querySelector('.page-head'); head.after(el(`<div>${tabs}</div>`));
   root.appendChild(holder);
   if (ctx.query.id) entryDrawer(res, Number(ctx.query.id), () => page.load());
 }
@@ -104,54 +109,54 @@ export async function entryDrawer(res, id, onChange) {
   let r;
   try { r = await api.get(`/r/${res}/${id}`); } catch (e) { return fail(e); }
   const lst = inc ? 'INCOME_STATUS' : 'EXPENSE_STATUS';
-  const open = !['recebido', 'pago', 'cancelado'].includes(r.status);
+  const paid = r.status === (inc ? 'recebido' : 'pago');
+  const open = !paid && r.status !== 'cancelado';
+  const obra = !inc && r.flow === 'obra';
+  // onde este lançamento aparece: caixa do escritório, financeiro da obra ou ambos
+  const where = inc ? 'Caixa do escritório' : obra ? (r.paid_by === 'escritorio' ? 'Financeiro da obra e caixa do escritório' : 'Somente no financeiro da obra (não movimenta o caixa)') : 'Caixa do escritório';
   const body = el(html`<div>
-    <div class="row between wrap mb-24"><div class="serif" style="font-size:34px">${money(r.amount)}</div>${badge(lst, r.status)}</div>
+    <div class="row between wrap mb-16"><div class="serif" style="font-size:34px">${money(r.amount)}</div>${r.informed_at && open ? html`<span class="badge warning">Informado pelo cliente — conferir</span>` : badge(lst, r.status)}</div>
+    <div class="note-box mb-16">${icon(inc ? 'in' : 'out', 'sm')}<div><b>${inc ? label('INCOME_NATURE', r.nature || 'honorarios') : obra ? 'Item da obra (custo do cliente)' : 'Despesa do escritório'}</b><div class="small muted">Aparece em: ${where}</div></div></div>
     <dl class="kv">
-      <dt>Vencimento</dt><dd>${date(r.due_date)}</dd>
+      <dt>Vencimento</dt><dd>${r.due_date ? date(r.due_date) : 'Na finalização — data a definir'}</dd>
       <dt>${inc ? 'Recebido em' : 'Pago em'}</dt><dd>${r.paid_at ? date(r.paid_at) : '—'}</dd>
+      ${obra ? html`<dt>Quem pagou</dt><dd>${paid ? (r.paid_by === 'cliente' ? 'Cliente, diretamente ao fornecedor' : 'Escritório') : html`<span class="muted">previsto: ${r.paid_by === 'cliente' ? 'cliente' : 'escritório'}</span>`}</dd>
+        ${r.paid_by === 'escritorio' ? html`<dt>Com qual dinheiro</dt><dd>${label('FUNDING', r.funding) || '—'}</dd>` : ''}
+        <dt>Etapa</dt><dd>${r.stage_label || (r.installment_total > 1 ? `${r.installment_no} de ${r.installment_total}` : 'Única')}</dd>` : html`<dt>Parcela</dt><dd>${r.installment_total > 1 ? `${r.installment_no} de ${r.installment_total}` : 'Única'}</dd>`}
+      ${(inc || r.paid_by === 'escritorio') ? html`<dt>Conta</dt><dd>${r.account || (S.meta.options.conta || ['Conta principal'])[0]}</dd>` : ''}
       <dt>Categoria</dt><dd>${r.category || '—'}</dd>
-      ${inc ? html`<dt>Cliente</dt><dd>${r.client_name ? html`<a href="#/clientes/${r.client_id}">${r.client_name}</a>` : '—'}</dd>` : html`<dt>Fornecedor</dt><dd>${r.supplier_name ? html`<a href="#/fornecedores/${r.supplier_id}">${r.supplier_name}</a>` : '—'}</dd>`}
-      <dt>Projeto</dt><dd>${r.project_name ? html`<a href="#/projetos/${r.project_id}">${r.project_name}</a>` : '—'}</dd>
-      ${!inc ? html`<dt>Obra</dt><dd>${r.work_name ? html`<a href="#/obras/${r.work_id}">${r.work_name}</a>` : '—'}</dd><dt>Quem paga</dt><dd>${label('PAID_BY', r.paid_by)}</dd><dt>Responsável</dt><dd>${r.responsible_name || '—'}</dd>` : ''}
+      ${inc ? html`<dt>Cliente</dt><dd>${r.client_name ? html`<a href="#/clientes/${r.client_id}">${r.client_name}</a>` : '—'}</dd>` : html`<dt>Fornecedor</dt><dd>${r.supplier_name ? html`<a href="#/fornecedores/${r.supplier_id}">${r.supplier_name}</a>` : '—'}</dd>${r.payee ? html`<dt>Quem recebeu</dt><dd>${r.payee}</dd>` : ''}`}
+      <dt>Projeto</dt><dd>${r.project_name ? html`<a href="#/projetos/${r.project_id}">${r.project_name}</a>${obra ? html` · <a href="#/financeiro/obras?projeto=${r.project_id}">financeiro da obra</a>` : ''}` : '—'}</dd>
+      ${!inc && r.work_name ? html`<dt>Obra</dt><dd><a href="#/obras/${r.work_id}">${r.work_name}</a></dd>` : ''}
       ${inc && r.contract_number ? html`<dt>Contrato</dt><dd><a href="#/contratos/${r.contract_id}">${r.contract_number}</a></dd>` : ''}
-      <dt>Parcela</dt><dd>${r.installment_total > 1 ? `${r.installment_no} de ${r.installment_total}` : 'Única'}</dd>
       <dt>Forma de pagamento</dt><dd>${label('PAYMENT_METHODS', r.method)}</dd>
       ${r.notes ? html`<dt>Observações</dt><dd class="notes">${r.notes}</dd>` : ''}
     </dl>
-    <div class="mt-24" data-att></div></div>`);
-  body.querySelector('[data-att]').appendChild(attachments(res, r.id, { title: inc ? 'Comprovantes (marque “visível ao cliente” em Documentos para liberar)' : 'Comprovante / nota fiscal' }));
-  const d = drawer({ title: r.description, sub: inc ? 'Entrada' : 'Saída', body });
+    <div class="mt-24" data-att></div><div class="mt-24" data-hist></div></div>`);
+  body.querySelector('[data-att]').appendChild(attachments(res, r.id, { title: 'Comprovantes e anexos' }));
+  body.querySelector('[data-hist]').appendChild(historyBox(res, r.id));
+  const d = drawer({ title: r.description, sub: inc ? 'Entrada' : obra ? 'Item da obra' : 'Saída', body });
   d.foot.classList.remove('hidden');
-  d.foot.innerHTML = toHTML(html`<button class="btn danger" data-del>${icon('trash')}</button><span class="grow"></span><button class="btn" data-dup>${icon('copy')} Duplicar</button><button class="btn" data-edit>${icon('edit')} Editar</button>
-    ${inc && r.status === 'recebido' && S.meta.resources.receipts ? html`<button class="btn" data-receipt>${icon('receipt')} Emitir recibo</button>` : ''}
-    ${open ? html`<button class="btn primary" data-pay>${icon('check')} ${inc ? 'Registrar recebimento' : 'Registrar pagamento'}</button>` : r.status !== 'cancelado' ? html`<button class="btn" data-unpay>${icon('refresh')} Estornar</button>` : ''}`);
+  d.foot.innerHTML = toHTML(html`${!paid ? html`<button class="btn danger" data-del title="Excluir">${icon('trash')}</button>` : ''}<span class="grow"></span><button class="btn" data-dup>${icon('copy')} Duplicar</button><button class="btn" data-edit>${icon('edit')} Editar</button>
+    ${inc && paid && S.meta.resources.receipts ? html`<button class="btn" data-receipt>${icon('receipt')} Emitir recibo</button>` : ''}
+    ${open ? html`<button class="btn primary" data-pay>${icon('check')} ${r.informed_at ? 'Conferir pagamento' : inc ? 'Registrar recebimento' : 'Registrar pagamento'}</button>` : paid ? html`<button class="btn" data-unpay>${icon('refresh')} Estornar</button>` : ''}`);
   const rb = d.foot.querySelector('[data-receipt]'); if (rb) rb.onclick = async () => { try { const x = await api.post('/receipts', { income_id: r.id, client_id: r.client_id }); d.close(); location.hash = `#/recibos/${x.id}`; } catch (e) { fail(e); } };
   const done = () => { d.close(); onChange && onChange(); };
   d.foot.querySelector('[data-edit]').onclick = () => { d.close(); openForm(res, { id: r.id, onSaved: onChange }); };
   d.foot.querySelector('[data-dup]').onclick = async () => { await api.post(`/r/${res}/${r.id}/duplicate`); toast('Duplicado.'); done(); };
-  d.foot.querySelector('[data-del]').onclick = async () => { const { deleteRow } = await import('../lib.js'); if (await deleteRow(res, r, r.description)) done(); };
-  const p = d.foot.querySelector('[data-pay]'); if (p) p.onclick = () => payModal(res, r, done);
-  const u = d.foot.querySelector('[data-unpay]'); if (u) u.onclick = async () => { await api.post(`/finance/${res}/${r.id}/unpay`); toast('Baixa estornada.'); done(); };
+  const del = d.foot.querySelector('[data-del]'); if (del) del.onclick = async () => { const { deleteRow } = await import('../lib.js'); if (await deleteRow(res, r, r.description)) done(); };
+  const p = d.foot.querySelector('[data-pay]'); if (p) p.onclick = () => payDialog(res, r, done);
+  const u = d.foot.querySelector('[data-unpay]'); if (u) u.onclick = () => reverseDialog(res, r, done);
 }
 
-export function payModal(res, r, onDone) {
-  const inc = res === 'incomes';
-  modal({ title: inc ? 'Registrar recebimento' : 'Registrar pagamento',
-    body: html`<p class="muted small" style="margin-top:0">${r.description} · ${money(r.amount)}</p><div class="form-grid">
-      <div class="field"><label>Data</label><input type="date" id="pd" value="${today()}"></div>
-      <div class="field"><label>Forma de pagamento</label><select id="pm"><option value="">—</option>${S.meta.lists.PAYMENT_METHODS.map((o) => html`<option value="${o.value}" ${o.value === r.method ? 'selected' : ''}>${o.label}</option>`)}</select></div>
-      <div class="field wide"><label>Valor ${inc ? 'recebido' : 'pago'}</label><div class="money-input"><span>R$</span><input type="number" step="0.01" id="pa" value="${r.amount}"></div><span class="hint">Se for menor que o valor total, o saldo restante vira um novo lançamento em aberto.</span></div></div>`,
-    actions: [{ label: 'Cancelar' }, { label: 'Confirmar', primary: true, fn: async (m) => {
-      await api.post(`/finance/${res}/${r.id}/pay`, { paid_at: m.querySelector('#pd').value, method: m.querySelector('#pm').value || null, amount: m.querySelector('#pa').value });
-      toast(inc ? 'Recebimento registrado.' : 'Pagamento registrado.'); onDone && onDone();
-    } }] });
-}
+export const payModal = payDialog; // compatibilidade
 
-// Novo lançamento com opção de parcelamento automático
+// Novo lançamento com opção de parcelamento automático (rascunho salvo enquanto preenche)
 export function newEntry(res, values = {}, onDone) {
   const inc = res === 'incomes';
-  const form = buildForm(res, values, { exclude: ['installment_no', 'installment_total', 'paid_at', 'status'] });
+  const dk = draftKey('novo-' + res, values); const draft = draftGet(dk);
+  const form = buildForm(res, draft ? { ...draft, ...values } : values, { exclude: ['installment_no', 'installment_total', 'paid_at', 'status'] });
+  draftWatch(form, dk);
   const inst = el(html`<div class="card flat mt-16"><label class="toggle"><input type="checkbox" data-split><span class="sw"></span><span>Pagamento parcelado</span></label>
     <div class="form-grid mt-16 hidden" data-opts>
       <div class="field"><label>Quantidade de parcelas</label><input type="number" min="2" max="120" value="6" data-n></div>
@@ -160,17 +165,21 @@ export function newEntry(res, values = {}, onDone) {
       <div class="field wide"><label class="toggle"><input type="checkbox" data-first><span class="sw"></span><span class="small">1ª parcela já ${inc ? 'recebida' : 'paga'}</span></label></div>
       <div class="wide small muted" data-preview></div>
     </div>
-    <label class="toggle" data-paidnow><input type="checkbox" data-paid><span class="sw"></span><span>Já foi ${inc ? 'recebido' : 'pago'}</span></label></div>`);
-  const body = el('<div></div>'); body.appendChild(form); body.appendChild(inst);
-  const d = drawer({ title: inc ? 'Nova receita' : 'Nova despesa', sub: 'Financeiro', body });
+    <label class="toggle" data-paidnow><input type="checkbox" data-paid><span class="sw"></span><span data-paidlbl>${inc ? 'Já recebido — o dinheiro entrou na conta do escritório' : 'Já foi pago'}</span></label></div>`);
+  const body = el('<div></div>');
+  if (draft) body.appendChild(draftBanner(dk, () => { d.close(); newEntry(res, values, onDone); }));
+  if (!inc && !values.flow) body.appendChild(el(html`<p class="small muted" style="margin-top:0">Pagamento a fornecedor de obra feito pelo cliente? Escolha <b>Tipo de saída: Item da obra</b> e “Quem paga: Cliente” — assim ele não sai do caixa do escritório.</p>`));
+  body.appendChild(form); body.appendChild(inst);
+  const d = drawer({ title: inc ? (values.nature === 'repasse' ? 'Recurso de cliente para repasse' : values.nature === 'reembolso' ? 'Reembolso de adiantamento' : 'Nova entrada') : values.flow === 'obra' ? 'Novo item da obra' : 'Nova despesa', sub: inc ? 'Caixa do escritório' : 'Financeiro', body });
   const q = (s) => inst.querySelector(s);
   const preview = () => {
     const v = readForm(form); const n = Math.max(2, +q('[data-n]').value || 2); const amt = +v.amount || 0;
     const each = q('[data-mode]').value === 'total' ? amt / n : amt; const total = q('[data-mode]').value === 'total' ? amt : amt * n;
     q('[data-preview]').textContent = amt ? `${n} parcelas de ${money(each)} · total ${money(total)} · 1º vencimento em ${date(v.due_date)}` : '';
+    if (!inc) q('[data-paidlbl]').textContent = v.flow === 'obra' && v.paid_by === 'cliente' ? 'Já foi pago pelo cliente (não movimenta o caixa)' : 'Já foi pago — saiu da conta do escritório';
   };
   q('[data-split]').onchange = (e) => { q('[data-opts]').classList.toggle('hidden', !e.target.checked); q('[data-paidnow]').classList.toggle('hidden', e.target.checked); preview(); };
-  inst.oninput = preview; form.addEventListener('input', preview);
+  inst.oninput = preview; form.addEventListener('input', preview); form.addEventListener('change', preview); preview();
   d.foot.classList.remove('hidden');
   d.foot.innerHTML = toHTML(html`<button class="btn" data-c>Cancelar</button><button class="btn primary" data-s>Salvar</button>`);
   d.foot.querySelector('[data-c]').onclick = d.close;
@@ -179,15 +188,16 @@ export function newEntry(res, values = {}, onDone) {
     const v = readForm(form); e.target.disabled = true;
     try {
       if (q('[data-split]').checked) {
+        if (!v.due_date) throw new Error('Informe o 1º vencimento.');
         const n = Math.max(2, +q('[data-n]').value || 2);
         const total = q('[data-mode]').value === 'total' ? +v.amount : +v.amount * n;
         const r = await api.post('/finance/installments', { ...v, table: res, total, count: n, first_due: v.due_date, interval: +q('[data-int]').value || 1, first_paid: q('[data-first]').checked });
         toast(`${r.ids.length} parcelas geradas.`);
       } else {
-        if (q('[data-paid]').checked) v.paid_at = v.due_date <= today() ? v.due_date : today();
-        await api.post(`/r/${res}`, v); toast(inc ? 'Receita cadastrada.' : 'Despesa cadastrada.');
+        if (q('[data-paid]').checked) v.paid_at = v.due_date && v.due_date <= today() ? v.due_date : today();
+        await api.post(`/r/${res}`, v); toast(inc ? 'Entrada cadastrada.' : 'Despesa cadastrada.');
       }
-      invalidateRefs(res); d.close(); onDone && onDone();
+      draftClear(dk); invalidateRefs(res); d.close(); onDone && onDone();
     } catch (err) { fail(err); e.target.disabled = false; }
   };
 }
@@ -196,7 +206,7 @@ export function newEntry(res, values = {}, onDone) {
 async function recurring(ctx, root, tabs) {
   const holder = el('<div></div>');
   await listPage({
-    root: holder, res: 'recurring_expenses', title: 'Financeiro', sub: 'Despesas mensais recorrentes — os próximos vencimentos são criados automaticamente', query: ctx.query, archived: false,
+    root: holder, res: 'recurring_expenses', title: 'Caixa do escritório', crumbs: 'Financeiro', sub: 'Despesas mensais recorrentes — os próximos vencimentos são criados automaticamente', query: ctx.query, archived: false,
     newLabel: 'Nova recorrência',
     columns: [
       { key: 'description', label: 'Descrição', render: (r) => html`<div class="cell-title">${r.description}</div><div class="cell-sub">${r.supplier_name || ''}</div>` },
@@ -207,10 +217,10 @@ async function recurring(ctx, root, tabs) {
       { key: 'active', label: 'Status', render: (r) => (r.active ? html`<span class="badge success">Ativa</span>` : html`<span class="badge muted">Pausada</span>`) },
     ],
     onRow: (r) => openForm('recurring_expenses', { id: r.id, onSaved: ctx.rerender }),
-    actions: (r, reload) => rowActions('recurring_expenses', r, { onChange: reload, extra: [{ label: 'Ver lançamentos gerados', icon: 'list', fn: () => ctx.go(`#/financeiro/saidas?preset=&q=${encodeURIComponent(r.description)}`) }, '-'] }),
+    actions: (r, reload) => rowActions('recurring_expenses', r, { onChange: reload, extra: [{ label: 'Ver lançamentos gerados', icon: 'list', fn: () => ctx.go(`#/financeiro/saidas?preset=caixa&q=${encodeURIComponent(r.description)}`) }, '-'] }),
     totals: (rows) => `Total mensal ativo: ${money(rows.filter((r) => r.active).reduce((s, r) => s + r.amount, 0))}`,
   });
-  holder.querySelector('.page-head').after(el(toHTML(tabs)));
+  holder.querySelector('.page-head').after(el(`<div>${tabs}</div>`));
   root.appendChild(holder);
 }
 
@@ -233,9 +243,9 @@ async function reminders(ctx, root, tabs) {
       ${r.status === 'enviado' ? html`<button class="btn sm ghost" data-unsent>Desfazer “enviado”</button>` : html`<button class="btn sm primary" data-sent>${icon('check', 'sm')} Marcar como enviado</button>`}
       <a class="btn sm ghost" href="#/financeiro/entradas?id=${r.income_id}">Ver parcela</a></div></div>`;
   root.innerHTML = toHTML(html`
-    <div class="page-head"><div><h1>Financeiro</h1><div class="sub">Lembretes de cobrança preparados no dia do vencimento — revise e envie você mesmo pelo WhatsApp</div></div>
+    <div class="page-head"><div><div class="crumbs">Financeiro</div><h1>Caixa do escritório</h1><div class="sub">Lembretes de cobrança preparados no dia do vencimento — revise e envie você mesmo pelo WhatsApp</div></div>
       <div class="row wrap"><a class="btn" href="#/configuracoes/cobranca">${icon('settings')} Texto das mensagens</a></div></div>
-    ${tabs}
+    ${raw(tabs)}
     ${d.pix_missing ? html`<div class="card flat mb-16 row between wrap"><span class="warning-text row gap-8">${icon('alert', 'sm')} A chave Pix do escritório não está cadastrada — as mensagens saem sem os dados de pagamento.</span><a class="btn sm" href="#/configuracoes/escritorio">Cadastrar chave Pix</a></div>` : ''}
     <div class="chips mb-16"><a class="chip ${view === 'abertos' ? 'on' : ''}" href="#/financeiro/lembretes">A enviar <span class="n">${d.open.length}</span></a><a class="chip ${view === 'enviados' ? 'on' : ''}" href="#/financeiro/lembretes?ver=enviados">Enviados <span class="n">${d.sent.length}</span></a></div>
     ${view === 'abertos' ? html`

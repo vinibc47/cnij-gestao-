@@ -38,7 +38,7 @@ export function quotesPanel(quotes, { projectId, workId, onChange }) {
       { header: 'Status' },
       ...S.meta.lists.QUOTE_STATUS.filter((o) => o.value !== q.status).map((o) => ({ label: o.label, fn: setStatus(o.value) })),
       '-',
-      S.user.finance ? { label: 'Contratar e lançar despesa', icon: 'wallet', fn: () => toExpense(q, onChange) } : null,
+      S.user.finance ? { label: 'Contratar e lançar na obra', icon: 'wallet', fn: () => toExpense(q, onChange) } : null,
       { label: q.client_visible ? 'Ocultar do cliente' : 'Liberar ao cliente', icon: 'eye', fn: async () => { await api.put(`/r/quotes/${q.id}`, { client_visible: q.client_visible ? 0 : 1 }); onChange(); } },
       ...rowActions('quotes', q, { onChange, title: `${q.item} — ${q.supplier_name || ''}` }),
     ]);
@@ -47,15 +47,8 @@ export function quotesPanel(quotes, { projectId, workId, onChange }) {
 }
 
 function toExpense(q, onChange) {
-  modal({ title: 'Contratar orçamento', body: html`<p class="small muted" style="margin-top:0">${q.item} · ${q.supplier_name || ''} · ${money(q.amount)}. Serão criadas as contas a pagar vinculadas ao projeto/obra.</p>
-    <div class="form-grid"><div class="field"><label>Valor total</label><input type="number" step="0.01" id="t" value="${q.amount}"></div>
-    <div class="field"><label>Parcelas</label><input type="number" id="n" value="1" min="1"></div>
-    <div class="field"><label>1º vencimento</label><input type="date" id="d" value="${today()}"></div>
-    <div class="field"><label>Quem paga</label><select id="pb"><option value="escritorio">Escritório</option><option value="cliente">Cliente (direto ao fornecedor)</option></select></div></div>`,
-  actions: [{ label: 'Cancelar' }, { label: 'Contratar', primary: true, fn: async (m) => {
-    const r = await api.post(`/quotes/${q.id}/to-expense`, { total: m.querySelector('#t').value, count: m.querySelector('#n').value, first_due: m.querySelector('#d').value, paid_by: m.querySelector('#pb').value });
-    toast(`Contratado · ${r.ids.length} lançamento(s) criado(s).`); onChange();
-  } }] });
+  // contratar = lançar o serviço no financeiro da OBRA (quem paga é escolhido; padrão: cliente direto ao fornecedor)
+  import('./money.js').then(({ obraItemDrawer }) => obraItemDrawer({ id: q.project_id, name: q.project_name || '' }, { quote_id: q.id }, onChange));
 }
 
 // Comparativo lado a lado: dados vêm dos orçamentos cadastrados; o que faltar aparece como "Não informado"

@@ -2,6 +2,7 @@ import { S, api, html, el, toHTML, icon, money, date, badge, label, progress, op
 import { listPage, rowActions } from './common.js';
 import { quotesPanel } from './quotes.js';
 import { newEntry, entryDrawer } from './finance.js';
+import { obraItemDrawer } from './money.js';
 import { taskDrawer } from './tasks.js';
 import { hbars } from '../charts.js';
 import { addVisToggle } from './projects.js';
@@ -66,7 +67,8 @@ async function detail(ctx, id) {
     { label: 'Informações gerais da obra', icon: 'docs', fn: () => ctx.go(`#/projetos/${w.project_id}?tab=infoobra`) },
     { label: 'PDF das etapas da obra', icon: 'print', fn: async () => (await import('../lib.js')).openPdf(`/pdf/work-phases/${w.id}`) },
     { label: 'Nova tarefa da obra', icon: 'tasks', fn: () => openForm('tasks', { values: { work_id: w.id, project_id: w.project_id }, onSaved: reload }) },
-    fin ? { label: 'Registrar gasto', icon: 'out', fn: () => newEntry('expenses', { work_id: w.id, project_id: w.project_id, category: 'Obra' }, reload) } : null,
+    fin ? { label: 'Lançar item da obra', icon: 'out', fn: () => obraItemDrawer({ id: w.project_id, name: w.project_name || w.name }, { work_id: w.id }, reload) } : null,
+    fin ? { label: 'Financeiro da obra', icon: 'wallet', fn: () => (location.hash = `#/financeiro/obras?projeto=${w.project_id}`) } : null,
     w.status !== 'concluida' ? { label: 'Marcar obra como concluída', icon: 'check', fn: async () => { await api.put(`/r/works/${w.id}`, { status: 'concluida', progress: 100 }); toast('Obra concluída.'); reload(); } } : null,
     '-', ...rowActions('works', w, { onChange: () => ctx.go('#/obras'), edit: false }),
   ]);
@@ -149,15 +151,15 @@ const T = {
     const box = el(html`<div class="grid g3"><div class="card"><div class="card-head"><h3>Por categoria</h3></div><div data-cat></div></div><div class="card"><div class="card-head"><h3>Por fornecedor</h3></div><div data-sup></div></div>
       <div class="card"><div class="card-head"><h3>Orçamento</h3></div><div class="serif" style="font-size:30px">${money(d.work.spent)}</div><div class="small muted">de ${money(d.work.budget)} previstos</div>
       <div class="progress mt-16 ${d.work.available < 0 ? 'danger' : ''}"><span style="width:${d.work.budget ? Math.min(100, (d.work.spent / d.work.budget) * 100) : 0}%"></span></div><div class="small mt-8 ${d.work.available < 0 ? 'danger-text' : 'muted'}">Saldo: ${money(d.work.available)}</div></div>
-      ${fin ? html`<div class="span3"><div class="row between mb-16 mt-16"><h3>Lançamentos da obra</h3><button class="btn sm primary" data-add>${icon('plus')} Registrar gasto</button></div><div data-t></div></div>` : ''}</div>`);
+      ${fin ? html`<div class="span3"><div class="row between wrap mb-16 mt-16"><h3>Lançamentos da obra</h3><div class="row gap-8"><a class="btn sm" href="#/financeiro/obras?projeto=${d.work.project_id}">${icon('wallet', 'sm')} Financeiro da obra</a><button class="btn sm primary" data-add>${icon('plus')} Lançar item da obra</button></div></div><div data-t></div></div>` : ''}</div>`);
     box.querySelector('[data-cat]').appendChild(hbars(d.spent_by_category));
     box.querySelector('[data-sup]').appendChild(hbars(d.spent_by_supplier));
     if (fin) {
       box.querySelector('[data-t]').appendChild(table({ rows: d.expenses, empty: 'Nenhum gasto registrado.', onRow: (r) => entryDrawer('expenses', r.id, reload), columns: [
         { key: 'due_date', label: 'Data', render: (r) => date(r.paid_at || r.due_date) }, { key: 'description', label: 'Descrição', render: (r) => html`<div class="cell-title">${r.description}</div><div class="cell-sub">${r.category || ''}${r.receipts_count ? ` · ${r.receipts_count} anexo(s)` : ''}</div>` },
-        { key: 'supplier_name', label: 'Fornecedor' }, { key: 'paid_by', label: 'Pago por', render: (r) => label('PAID_BY', r.paid_by) },
+        { key: 'supplier_name', label: 'Fornecedor' }, { key: 'paid_by', label: 'Quem paga', render: (r) => (r.flow === 'obra' ? (r.paid_by === 'cliente' ? 'Cliente (direto)' : 'Escritório') : 'Despesa do escritório') },
         { key: 'amount', label: 'Valor', align: 'right', render: (r) => money(r.amount) }, { key: 'status', label: 'Status', render: (r) => badge('EXPENSE_STATUS', r.status) }] }));
-      box.querySelector('[data-add]').onclick = () => newEntry('expenses', { work_id: d.work.id, project_id: d.work.project_id, category: 'Obra' }, reload);
+      box.querySelector('[data-add]').onclick = () => obraItemDrawer({ id: d.work.project_id, name: (d.project && d.project.name) || d.work.name }, { work_id: d.work.id }, reload);
     }
     body.appendChild(box);
   },

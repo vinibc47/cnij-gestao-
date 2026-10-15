@@ -3,6 +3,7 @@ import { listPage, rowActions } from './common.js';
 import { quotesPanel } from './quotes.js';
 import { clientAreaPanel } from './clientarea.js';
 import { newEntry, entryDrawer } from './finance.js';
+import { obraItemDrawer } from './money.js';
 import { taskDrawer } from './tasks.js';
 
 export default async function (ctx) {
@@ -104,7 +105,9 @@ async function detail(ctx, id) {
     { label: 'Nova reunião', icon: 'calendar', fn: () => openForm('events', { values: { project_id: id, client_id: p.client_id, type: 'reuniao' }, onSaved: reload }) },
     { label: 'Lançar horas', icon: 'clock', fn: () => openForm('time_entries', { values: { project_id: id }, onSaved: reload }) },
     fin ? { label: 'Nova receita do projeto', icon: 'in', fn: () => newEntry('incomes', { project_id: id, client_id: p.client_id }, reload) } : null,
-    fin ? { label: 'Nova despesa do projeto', icon: 'out', fn: () => newEntry('expenses', { project_id: id }, reload) } : null,
+    fin ? { label: 'Nova despesa do escritório (projeto)', icon: 'out', fn: () => newEntry('expenses', { project_id: id, flow: 'escritorio' }, reload) } : null,
+    fin ? { label: 'Lançar item da obra', icon: 'out', fn: () => obraItemDrawer({ id, name: p.name }, {}, reload) } : null,
+    fin ? { label: 'Financeiro da obra', icon: 'wallet', fn: () => (location.hash = `#/financeiro/obras?projeto=${id}`) } : null,
     '-',
     ...(mgr ? rowActions('projects', p, { onChange: () => ctx.go('#/projetos'), edit: false }) : []),
   ]);
@@ -310,17 +313,18 @@ const TABS = {
       <div class="card span2"><div class="card-head"><h3>Recebimentos</h3><button class="btn xs" data-ni>${icon('plus', 'sm')} Receita</button></div>
         <div class="row gap-24 small mb-16"><span>Recebido <b>${money(pr.received)}</b></span><span>A receber <b>${money(pr.receivable)}</b></span>${pr.overdue ? html`<span class="danger-text">Vencido <b>${money(pr.overdue)}</b></span>` : ''}</div>
         <div data-inc></div></div>
-      <div class="card span3"><div class="card-head"><h3>Despesas e custos do projeto</h3><button class="btn xs" data-ne>${icon('plus', 'sm')} Despesa</button></div><div data-exp></div></div>
+      <div class="card span3"><div class="card-head"><h3>Despesas e custos do projeto</h3><div class="row gap-8"><a class="btn xs" href="#/financeiro/obras?projeto=${p.id}">${icon('wallet', 'sm')} Financeiro da obra</a><button class="btn xs" data-no>${icon('plus', 'sm')} Item da obra</button><button class="btn xs" data-ne>${icon('plus', 'sm')} Despesa do escritório</button></div></div><div data-exp></div></div>
     </div>`);
     const tbl = (rows, res) => table({ rows, cls: 'compact', empty: 'Nenhum lançamento.', onRow: (r) => entryDrawer(res, r.id, reload), columns: [
       { key: 'due_date', label: 'Vencimento', render: (r) => html`<span class="${r.status === 'vencido' ? 'late' : ''}">${date(r.due_date)}</span>` },
-      { key: 'description', label: 'Descrição', render: (r) => html`<div class="cell-title">${r.description}</div><div class="cell-sub">${r.category || ''}${r.supplier_name ? ' · ' + r.supplier_name : ''}${r.paid_by === 'cliente' ? ' · pago pelo cliente' : ''}</div>` },
+      { key: 'description', label: 'Descrição', render: (r) => html`<div class="cell-title">${r.description}</div><div class="cell-sub">${r.category || ''}${r.supplier_name ? ' · ' + r.supplier_name : ''}${r.flow === 'obra' ? (r.paid_by === 'cliente' ? ' · obra · pago pelo cliente' : ' · obra · pago pelo escritório') : ''}${r.nature && r.nature !== 'honorarios' ? ' · ' + (r.nature === 'repasse' ? 'recurso para repasse' : 'reembolso') : ''}</div>` },
       { key: 'amount', label: 'Valor', align: 'right', render: (r) => money(r.amount) },
       { key: 'status', label: 'Status', render: (r) => badge(res === 'incomes' ? 'INCOME_STATUS' : 'EXPENSE_STATUS', r.status) }] });
     box.querySelector('[data-inc]').appendChild(tbl(d.incomes, 'incomes'));
     box.querySelector('[data-exp]').appendChild(tbl(d.expenses, 'expenses'));
     box.querySelector('[data-ni]').onclick = () => newEntry('incomes', { project_id: p.id, client_id: p.client_id }, reload);
-    box.querySelector('[data-ne]').onclick = () => newEntry('expenses', { project_id: p.id }, reload);
+    box.querySelector('[data-ne]').onclick = () => newEntry('expenses', { project_id: p.id, flow: 'escritorio' }, reload);
+    box.querySelector('[data-no]').onclick = () => obraItemDrawer({ id: p.id, name: p.name }, {}, reload);
     body.appendChild(box);
   },
 

@@ -232,6 +232,7 @@ const REF = {
   proposals: { res: 'proposals', label: (r) => `${r.number} — ${r.title}`, sub: (r) => r.client_name },
   tasks: { res: 'tasks', label: (r) => r.title, sub: (r) => r.project_name, params: { preset: 'abertas' } },
   project_phases: { res: 'project_phases', label: (r) => r.name, sub: (r) => r.project_name },
+  advances: { res: 'expenses', label: (r) => `${r.description} — ${money(r.amount)}`, sub: (r) => r.project_name, params: { preset: 'adiantamentos' } },
 };
 export async function refOptions(ref, params = {}) {
   if (ref === 'users') return S.meta.users.map((u) => ({ id: u.id, label: u.name, sub: u.job_title }));
@@ -289,8 +290,8 @@ export function fieldInput(f, v, ctx = {}) {
   const name = f.name;
   const vv = v ?? '';
   switch (f.type) {
-    case 'textarea': return el(html`<textarea name="${name}" ${req} rows="3" ${f.raw ? raw('data-raw') : ''}>${vv}</textarea>`);
-    case 'money': return el(html`<div class="money-input"><span>R$</span><input type="number" step="0.01" name="${name}" value="${vv}" ${req} inputmode="decimal"></div>`);
+    case 'textarea': return el(html`<textarea name="${name}" ${req} rows="3" ${f.raw ? raw('data-raw') : ''} placeholder="${f.placeholder || ''}">${vv}</textarea>`);
+    case 'money': return el(html`<div class="money-input"><span>R$</span><input type="number" step="0.01" name="${name}" value="${vv}" ${req} inputmode="decimal" placeholder="${f.placeholder || '0,00'}"></div>`);
     case 'number': return el(html`<input type="number" step="any" name="${name}" value="${vv}" ${req} inputmode="decimal">`);
     case 'percent': return el(html`<div class="row"><input type="range" min="0" max="100" step="5" name="${name}" value="${vv || 0}"><span class="small muted" style="width:40px">${vv || 0}%</span></div>`);
     case 'date': return el(html`<input type="date" name="${name}" value="${String(vv).slice(0, 10)}" ${req}>`);
@@ -307,7 +308,7 @@ export function fieldInput(f, v, ctx = {}) {
     case 'option': {
       const opts = (S.meta.options[f.opt] || []).map((n) => ({ id: n, label: n }));
       if (vv && !opts.find((o) => o.id === vv)) opts.push({ id: vv, label: vv });
-      return combo({ name, options: opts, value: vv, allowEmpty: !f.required,
+      return combo({ name, options: opts, value: vv, allowEmpty: !f.required, placeholder: f.placeholder || 'Selecionar…',
         onCreate: async (n) => { if (!f.free && !isManager()) { toast('Somente gestores podem criar categorias.', { error: true }); return null; } if (!f.free) { await api.post('/admin/options', { kind: f.opt, name: n }); (S.meta.options[f.opt] = S.meta.options[f.opt] || []).push(n); } return { id: n, label: n }; } });
     }
     case 'ref': {
@@ -323,7 +324,7 @@ export function fieldInput(f, v, ctx = {}) {
       });
       return w;
     }
-    default: return el(html`<input type="text" name="${name}" value="${vv}" ${req} ${f.readonly ? raw('readonly') : ''} ${f.sentence ? raw('data-sentence') : ''}>`);
+    default: return el(html`<input type="text" name="${name}" value="${vv}" ${req} ${f.readonly ? raw('readonly') : ''} ${f.sentence ? raw('data-sentence') : ''} placeholder="${f.placeholder || ''}">`);
   }
 }
 
@@ -334,14 +335,19 @@ export function buildForm(resKey, values = {}, { only, exclude = [], hide = [] }
   const ctx = { values: { ...values } };
   const defaults = (f) => (f.default === '$today' ? today() : f.default === '$me' ? S.user.id : f.default);
   const isNew = !values.id;
+  // campos opcionais ficam recolhidos em "Mais detalhes"
+  const moreFields = fields.filter((f) => f.more && !hide.includes(f.name));
+  const more = moreFields.length ? el(html`<details class="more-details wide"><summary>Mais detalhes <span class="muted small">(${moreFields.map((f) => f.label.toLowerCase()).slice(0, 3).join(', ')}${moreFields.length > 3 ? '…' : ''})</span></summary><div class="form-grid"></div></details>`) : null;
   fields.forEach((f) => {
     const v = values[f.name] !== undefined ? values[f.name] : (isNew ? defaults(f) : undefined);
     const wrap = el(html`<div class="field ${f.wide || f.type === 'textarea' ? 'wide' : ''} ${hide.includes(f.name) ? 'hidden' : ''}" data-field="${f.name}"><label>${f.label}${f.required ? html` <span class="req">*</span>` : ''}</label></div>`);
     const input = fieldInput(f, v, ctx);
     if (f.readonly) input.setAttribute?.('disabled', '');
     wrap.appendChild(input);
-    form.appendChild(wrap);
+    if (f.hint) wrap.appendChild(el(html`<span class="hint">${f.hint}</span>`));
+    (more && f.more && !hide.includes(f.name) ? more.querySelector('.form-grid') : form).appendChild(wrap);
   });
+  if (more) form.appendChild(more);
   // dependências (ex.: etapa depende do projeto) e visibilidade condicional
   ctx.onRefChange = (name, val) => {
     ctx.values[name] = val;
@@ -387,14 +393,32 @@ export function validate(form) {
   return true;
 }
 
+// Rascunhos: formulários novos são salvos no navegador enquanto são preenchidos
+export const draftKey = (k, ctx = {}) => `rascunho:${k}:${JSON.stringify(Object.entries(ctx).filter(([, v]) => v !== undefined && v !== null && v !== '').sort())}`;
+export function draftGet(k) { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); if (!v || Date.now() - v.t > 14 * 864e5) return null; return v.d; } catch { return null; } }
+export function draftClear(k) { try { localStorage.removeItem(k); } catch {} }
+export function draftWatch(form, k, read = () => readForm(form)) {
+  const save = debounce(() => { try { const d = read(); if (Object.values(d).some((v) => v !== '' && v !== null && v !== undefined && !(Array.isArray(v) && !v.length))) localStorage.setItem(k, JSON.stringify({ t: Date.now(), d })); } catch {} }, 400);
+  form.addEventListener('input', save); form.addEventListener('change', save); form.addEventListener('click', save);
+}
+export function draftBanner(k, onDiscard) {
+  const b = el(html`<div class="draft-note">${icon('edit', 'sm')}<span>Rascunho recuperado — continue de onde parou.</span><button type="button" class="btn xs ghost">Descartar rascunho</button></div>`);
+  b.querySelector('button').onclick = () => { draftClear(k); onDiscard && onDiscard(); };
+  return b;
+}
+
 // Abre um formulário (novo ou edição) em um drawer
 export function openForm(resKey, { id, values = {}, title, onSaved, only, exclude, hide, before, after, extra, transform, saveLabel } = {}) {
   const meta = S.meta.resources[resKey];
   return new Promise(async (resolve) => {
     let row = values;
     if (id) { try { row = { ...(await api.get(`/r/${resKey}/${id}`)), ...values }; } catch (e) { fail(e); return resolve(null); } }
+    const dk = id ? null : draftKey(resKey, values); const draft = dk ? draftGet(dk) : null;
+    if (draft) row = { ...draft, ...values };
     const form = buildForm(resKey, row, { only, exclude, hide });
+    if (dk) draftWatch(form, dk);
     const body = el('<div></div>');
+    if (draft) body.appendChild(draftBanner(dk, () => { d.close(); openForm(resKey, { id, values, title, onSaved, only, exclude, hide, before, after, extra, transform, saveLabel }).then(resolve); }));
     if (before) body.appendChild(before instanceof Node ? before : el(toHTML(before)));
     body.appendChild(form);
     if (after) body.appendChild(after instanceof Node ? after : el(toHTML(after)));
@@ -411,7 +435,7 @@ export function openForm(resKey, { id, values = {}, title, onSaved, only, exclud
       const b = d.foot.querySelector('[data-save]'); b.disabled = true;
       try {
         const saved = id ? await api.put(`/r/${resKey}/${id}`, data) : await api.post(`/r/${resKey}`, data);
-        invalidateRefs(resKey);
+        invalidateRefs(resKey); if (dk) draftClear(dk);
         toast(id ? 'Alterações salvas.' : `${meta.singular} criado(a).`);
         d.close(); resolve(saved); onSaved && onSaved(saved);
       } catch (e) { fail(e); b.disabled = false; }

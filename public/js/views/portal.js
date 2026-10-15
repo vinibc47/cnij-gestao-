@@ -56,6 +56,7 @@ export default async function portal(root) {
       const it = e.target.closest('[data-media]'); if (it) return openMedia(p, Number(it.dataset.media));
       const ap = e.target.closest('[data-approve]'); if (ap) return approve(p, Number(ap.dataset.approve), body);
       const aj = e.target.closest('[data-adjust]'); if (aj) return adjust(p, Number(aj.dataset.adjust));
+      const inf = e.target.closest('[data-inform]'); if (inf) return informPay(inf.dataset.inform, Number(inf.dataset.id), Number(inf.dataset.amount), inf.dataset.desc);
     });
     const ci = body.querySelector('[data-cmp-item]'); if (ci) ci.onchange = () => { st.cmpItem = ci.value; st.cmpSel = null; render(); };
     $$('[data-cmp-q]', body).forEach((c) => (c.onchange = () => { st.cmpSel = $$('[data-cmp-q]', body).filter((x) => x.checked).map((x) => Number(x.value)); render(); }));
@@ -86,6 +87,20 @@ export default async function portal(root) {
     modal({ title: 'Solicitar ajustes', body: b, actions: [{ label: 'Cancelar' }, { label: 'Enviar ao escritório', primary: true, fn: async () => {
       const c = b.querySelector('[data-c]').value.trim(); if (!c) { toast('Descreva o ajuste solicitado.', { error: true }); return false; }
       try { await api.post(`/portal/approvals/${id}/decide`, { action: 'ajustes', comment: c }); toast('Pedido de ajustes enviado ao escritório.'); await load(); render(); } catch (err) { fail(err); return false; }
+    } }] });
+  };
+  // cliente informa um pagamento (fica aguardando conferência do escritório)
+  const informPay = (tbl, id, amount, desc) => {
+    const b = el(html`<div><p class="small muted" style="margin-top:0">${desc}</p>
+      <div class="form-grid"><div class="field"><label>Valor pago</label><div class="money-input"><span>R$</span><input type="number" step="0.01" data-a value="${amount}" inputmode="decimal"></div></div>
+      <div class="field"><label>Data do pagamento</label><input type="date" data-d value="${new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 10)}"></div>
+      <div class="field wide"><label>Comprovante <span class="muted small">(recomendado)</span></label><input type="file" data-f accept="image/*,application/pdf"></div>
+      <div class="field wide"><label>Observação <span class="muted small">(opcional)</span></label><input data-n placeholder="Ex.: pago via Pix"></div></div>
+      <p class="small muted">O escritório vai conferir e confirmar. Até lá, a parcela aparece como “Pagamento informado — aguardando conferência”.</p></div>`);
+    modal({ title: 'Informar pagamento', body: b, actions: [{ label: 'Cancelar' }, { label: 'Enviar ao escritório', primary: true, fn: async () => {
+      const fd = new FormData(); fd.append('amount', b.querySelector('[data-a]').value); fd.append('date', b.querySelector('[data-d]').value); fd.append('note', b.querySelector('[data-n]').value);
+      const f = b.querySelector('[data-f]').files[0]; if (f) fd.append('files', f);
+      try { await api(`/portal/payments/${tbl}/${id}/inform`, { method: 'POST', body: fd }); toast('Pagamento informado. O escritório vai conferir.'); await load(); render(); } catch (err) { fail(err); return false; }
     } }] });
   };
   render();
@@ -139,7 +154,7 @@ const VIEWS = {
       </div>
       <div class="pt-quicks">
         <div class="pt-card pt-quick">${icon('bars')}<div><h3>Andamento</h3><div class="pt-sub">Veja as etapas do seu projeto</div><button class="pt-link" data-go="andamento">Ver cronograma ${icon('arrow', 'sm')}</button></div></div>
-        <div class="pt-card pt-quick">${icon('card')}<div><h3>Financeiro</h3><div class="pt-sub">Orçamentos e comparativos</div><button class="pt-link" data-go="financeiro" data-sub="orcamentos">Consultar orçamentos ${icon('arrow', 'sm')}</button></div></div>
+        <div class="pt-card pt-quick">${icon('card')}<div><h3>Financeiro</h3><div class="pt-sub">Orçamentos, aprovações e pagamentos</div><button class="pt-link" data-go="financeiro" data-sub="orcamentos">Consultar orçamentos ${icon('arrow', 'sm')}</button></div></div>
         <div class="pt-card pt-quick">${icon('folder')}<div><h3>Documentos</h3><div class="pt-sub">Contratos e arquivos disponíveis</div><button class="pt-link" data-go="documentos">Acessar documentos ${icon('arrow', 'sm')}</button></div></div>
       </div>
       <div class="pt-card pt-updates"><div class="row gap-8" style="margin-bottom:6px">${icon('clock')}<h3 class="serif" style="font-size:22px;font-weight:500">Últimas atualizações</h3></div>
@@ -179,7 +194,8 @@ const VIEWS = {
     ${(p.minutes || []).length ? html`<div class="pt-card"><h3 class="serif" style="font-size:22px;font-weight:500;margin-bottom:10px">Atas de reunião</h3><div class="files">${p.minutes.map((a) => html`<div class="file"><div class="file-ico">PDF</div><div class="grow"><a class="li-title" href="/api/portal/minutes/${a.id}/pdf" target="_blank" rel="noopener">${a.title || 'Reunião'}</a><div class="li-sub">${date(a.date)}${a.number ? ' · ' + a.number : ''}</div></div></div>`)}</div></div>` : ''}</div>`,
   financeiro: (p, d, st) => {
     const inst = d.finance.installments.filter((i) => !i.project_id || i.project_id === p.id);
-    const subs = [['orcamentos', 'Orçamentos'], ['comparativo', 'Comparativo de orçamentos'], ['aprovacoes', `Aprovações${pending(p).length ? ` (${pending(p).length})` : ''}`], inst.length ? ['pagamentos', 'Pagamentos ao escritório'] : null].filter(Boolean);
+    const hasPay = inst.length || (d.finance.works || []).some((w) => w.project_id === p.id) || (d.finance.client_funds || []).some((i) => !i.project_id || i.project_id === p.id);
+    const subs = [['orcamentos', 'Orçamentos'], ['comparativo', 'Comparativo de orçamentos'], ['aprovacoes', `Aprovações${pending(p).length ? ` (${pending(p).length})` : ''}`], hasPay ? ['pagamentos', 'Pagamentos'] : null].filter(Boolean);
     if (!subs.find((s) => s[0] === st.sub)) st.sub = 'orcamentos';
     return html`<div><div class="pt-subtabs">${subs.map(([k, l]) => html`<button data-sub="${k}" class="${k === st.sub ? 'on' : ''}">${l}</button>`)}</div>${FIN[st.sub](p, d, st, inst)}</div>`;
   },
@@ -233,13 +249,39 @@ const FIN = {
           ${e.snapshot ? html`<div class="small muted">${[e.snapshot.supplier, e.snapshot.amount ? money(e.snapshot.amount) : null, `versão ${e.snapshot.version}`].filter(Boolean).join(' · ')}</div>` : ''}${e.comment ? html`<div class="small">${e.comment}</div>` : ''}</div>`)}</div></details>` : ''}</div>`;
     })}</div>`),
   pagamentos: (p, d, st, inst) => {
-    const sum = (f) => inst.filter(f).reduce((s, i) => s + i.amount, 0);
-    return html`<div><div class="pt-note">Parcelas dos honorários do escritório (diferentes dos orçamentos de fornecedores).</div><div class="grid g4"><div class="card kpi"><span class="label">Valor contratado</span><span class="value">${money(p.contract_value || d.finance.contracted)}</span></div>
-      <div class="card kpi"><span class="label">Pago</span><span class="value">${money(sum((i) => i.status === 'recebido'))}</span></div>
-      <div class="card kpi"><span class="label">A vencer</span><span class="value">${money(sum((i) => ['a_receber', 'previsto'].includes(i.status)))}</span></div>
-      <div class="card kpi ${sum((i) => i.status === 'vencido') ? 'alert' : ''}"><span class="label">Vencido</span><span class="value">${money(sum((i) => i.status === 'vencido'))}</span></div></div>
-      <div class="table-wrap mt-16"><table class="t responsive"><thead><tr><th>Parcela</th><th>Descrição</th><th>Vencimento</th><th class="right">Valor</th><th>Pagamento</th><th>Situação</th><th></th></tr></thead><tbody>
-        ${inst.map((i) => html`<tr><td data-l="Parcela">${i.installment_total > 1 ? `${i.installment_no}/${i.installment_total}` : 'Única'}</td><td data-l="Descrição">${i.description}</td><td data-l="Vencimento">${date(i.due_date)}</td><td class="right" data-l="Valor">${money(i.amount)}</td><td data-l="Pago em">${i.paid_at ? date(i.paid_at) : '—'}</td>
-          <td data-l="Situação"><span class="badge ${INT[i.status] || ''}">${IN[i.status] || i.status}</span></td><td class="actions">${i.receipts.map((r) => html`<a class="btn xs" href="${url(r)}">${icon('download', 'sm')} Comprovante</a>`)}${(i.receipt_docs || []).map((r) => html`<a class="btn xs" href="/api/portal/receipts/${r.id}/pdf" target="_blank" rel="noopener">${icon('download', 'sm')} Recibo ${r.number}</a>`)}</td></tr>`)}</tbody></table></div></div>`;
+    const sum = (list, f) => list.filter(f).reduce((s, i) => s + i.amount, 0);
+    const w = (d.finance.works || []).find((x) => x.project_id === p.id);
+    const funds = (d.finance.client_funds || []).filter((i) => !i.project_id || i.project_id === p.id);
+    const soon = new Date(Date.now() + 45 * 864e5).toISOString().slice(0, 10);
+    const infBtn = (tbl, x, open) => (x.informed ? html`<span class="badge warning">Pagamento informado — aguardando conferência</span>` : open && (tbl === 'expenses' || !x.due_date || x.due_date <= soon) ? html`<button class="btn xs" data-inform="${tbl}" data-id="${x.id}" data-amount="${x.amount}" data-desc="${x.description || x.stage}">Informar pagamento</button>` : '');
+    const incTable = (list) => html`<div class="table-wrap mt-16"><table class="t responsive"><thead><tr><th>Parcela</th><th>Descrição</th><th>Vencimento</th><th class="right">Valor</th><th>Pago em</th><th>Situação</th><th></th></tr></thead><tbody>
+      ${list.map((i) => { const open = !['recebido', 'cancelado'].includes(i.status); return html`<tr data-ref="inc-${i.id}"><td data-l="Parcela">${i.installment_total > 1 ? `${i.installment_no}/${i.installment_total}` : 'Única'}</td><td data-l="Descrição">${i.description}</td><td data-l="Vencimento">${date(i.due_date)}</td><td class="right" data-l="Valor">${money(i.amount)}</td><td data-l="Pago em">${i.paid_at ? date(i.paid_at) : '—'}</td>
+        <td data-l="Situação"><span class="badge ${INT[i.status] || ''}">${IN[i.status] || i.status}</span></td><td class="actions">${infBtn('incomes', i, open)}${i.receipts.map((r) => html`<a class="btn xs" href="${url(r)}">${icon('download', 'sm')} Comprovante</a>`)}${(i.receipt_docs || []).map((r) => html`<a class="btn xs" href="/api/portal/receipts/${r.id}/pdf" target="_blank" rel="noopener">${icon('download', 'sm')} Recibo ${r.number}</a>`)}</td></tr>`; })}</tbody></table></div>`;
+    const ST_TONE = { pago_cliente: 'success', pago_escritorio: 'success', informado: 'warning', vencido: 'danger', sem_data: 'muted', aguardando: 'info' };
+    return html`<div class="col" style="gap:22px">
+      ${inst.length ? html`<section><h3 class="pt-sec">Honorários do escritório</h3><div class="pt-note">Parcelas dos honorários do escritório — diferentes dos pagamentos a fornecedores da obra.</div>
+        <div class="grid g4"><div class="card kpi"><span class="label">Total das parcelas</span><span class="value">${money(sum(inst, () => true))}</span></div>
+        <div class="card kpi"><span class="label">Pago</span><span class="value">${money(sum(inst, (i) => i.status === 'recebido'))}</span></div>
+        <div class="card kpi"><span class="label">Falta pagar</span><span class="value">${money(sum(inst, (i) => ['a_receber', 'previsto', 'vencido'].includes(i.status)))}</span></div>
+        <div class="card kpi ${sum(inst, (i) => i.status === 'vencido') ? 'alert' : ''}"><span class="label">Vencido</span><span class="value">${money(sum(inst, (i) => i.status === 'vencido'))}</span></div></div>
+        ${incTable(inst)}</section>` : ''}
+      ${w ? html`<section><h3 class="pt-sec">Fornecedores e serviços da obra</h3><div class="pt-note">Serviços aprovados e contratados para a obra: o que já foi pago, a quem, e o que ainda falta. Orçamentos que ainda aguardam aprovação aparecem à parte e não entram nos totais.</div>
+        <div class="grid g4"><div class="card kpi"><span class="label">Total contratado</span><span class="value">${money(w.totals.contratado)}</span></div>
+          <div class="card kpi"><span class="label">Pago</span><span class="value">${money(w.totals.pago)}</span></div>
+          <div class="card kpi"><span class="label">Falta pagar</span><span class="value">${money(w.totals.a_pagar)}</span></div>
+          <div class="card kpi ${w.overdue.length ? 'alert' : ''}"><span class="label">Parcelas vencidas</span><span class="value">${w.overdue.length}</span></div></div>
+        ${w.next.length ? html`<div class="pt-card mt-16"><h4 class="pt-h4">Próximos vencimentos</h4><div class="list">${w.next.map((x) => html`<div class="list-item"><div class="grow"><div class="li-title">${x.description}</div></div><div class="right"><b>${money(x.amount)}</b><div class="small muted">${date(x.due_date)}</div></div></div>`)}</div></div>` : ''}
+        <div class="col mt-16" style="gap:14px">${w.groups.map((g) => html`<div class="pt-card"><div class="row between wrap top gap-8"><div><h4 class="pt-h4" style="margin:0">${g.service}</h4><div class="small muted">${g.supplier || 'Fornecedor não informado'}</div></div>
+            <div class="pt-tot"><div><span class="k">Contratado</span>${money(g.total)}</div><div><span class="k">Pago</span>${money(g.paid)}</div><div><span class="k">Falta</span>${money(g.remaining)}</div></div></div>
+          <div class="progress mt-8"><span style="width:${g.total ? Math.min(100, (g.paid / g.total) * 100) : 0}%"></span></div>
+          <div class="pt-parcels">${g.parcels.map((x) => html`<div class="pt-parcel" data-ref="exp-${x.id}"><div class="grow"><b>${x.stage}</b> · ${money(x.amount)}
+              <div class="small muted">${x.paid_at ? `Pago em ${date(x.paid_at)}${x.paid_by === 'cliente' ? ' por você' : x.paid_by === 'escritorio' ? ' pelo escritório' : ''}${x.payee ? ' · recebido por ' + x.payee : ''}` : x.due_date ? `Vencimento ${date(x.due_date)}` : 'Na finalização — data a definir'}</div>
+              ${x.files && x.files.length ? html`<div class="row wrap gap-8 mt-4">${x.files.map((f) => html`<a class="small" href="${url(f, true)}" target="_blank" rel="noopener">${icon('clip', 'sm')} ${f.title || 'Comprovante'}</a>`)}</div>` : ''}</div>
+            <div class="right col" style="gap:6px;align-items:flex-end"><span class="badge ${ST_TONE[x.status] || ''}">${x.status_label}</span>${!x.status.startsWith('pago') && x.status !== 'informado' ? infBtn('expenses', { ...x, description: g.service + ' — ' + x.stage }, true) : ''}</div></div>`)}</div></div>`)}
+          ${w.approved_without_parcels.map((q) => html`<div class="pt-card"><div class="row between wrap"><div><h4 class="pt-h4" style="margin:0">${q.service}</h4><div class="small muted">${q.supplier || 'Fornecedor não informado'}</div></div><div class="right"><b>${money(q.total)}</b><div class="small muted">Aprovado — parcelas a definir</div></div></div></div>`)}</div>
+        ${w.pending_quotes.length ? html`<div class="pt-card mt-16 soft"><h4 class="pt-h4">Aguardando sua aprovação</h4><div class="small muted" style="margin:-4px 0 8px">Não somados aos totais acima.</div><div class="list">${w.pending_quotes.map((q) => html`<div class="list-item"><div class="grow"><div class="li-title">${q.item}</div><div class="li-sub">${q.supplier || ''}</div></div><span class="muted">${q.amount ? money(q.amount) : '—'}</span></div>`)}</div></div>` : ''}
+      </section>` : ''}
+      ${funds.length ? html`<section><h3 class="pt-sec">Valores enviados ao escritório para a obra</h3><div class="pt-note">Recursos que você transferiu ao escritório para pagar fornecedores (repasse) e reembolsos de valores adiantados pelo escritório. Não são honorários.</div>${incTable(funds)}</section>` : ''}
+    </div>`;
   },
 };
