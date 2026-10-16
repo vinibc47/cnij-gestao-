@@ -164,6 +164,44 @@ router.get('/backups/:name', P.requireAdmin, wrap((req, res) => {
   audit(req, 'download', null, null, `Download do backup ${name}`);
   res.download(full);
 }));
+// cópia completa para baixar: banco + arquivos anexados + logo, em um .zip
+router.get('/backup-full', P.requireAdmin, wrap(async (req, res) => {
+  const drive = require('../services/drive');
+  const { entries, total } = drive.fullCopyEntries();
+  if (total > 3.8 * 1024 ** 3) throw new HttpError(400, 'Os arquivos passam de 3,8 GB — baixe o banco de dados pelo botão de backup e copie a pasta de arquivos pelo servidor.');
+  audit(req, 'download', null, null, 'Download da cópia completa (banco + arquivos)');
+  const stamp = nowIso().slice(0, 16).replace(/[: ]/g, '-');
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="copia-completa-cnij-${stamp}.zip"`);
+  await drive.zipTo(res, entries);
+}));
+
+// Google Drive (cópia automática fora do servidor)
+router.get('/drive', P.requireAdmin, wrap((req, res) => { const d = require('../services/drive'); res.json({ ...d.status(), script: d.appsScript() }); }));
+router.put('/drive', P.requireAdmin, wrap(async (req, res) => {
+  const d = require('../services/drive'); const b = req.body || {};
+  if ('keep_days' in b) setSetting('drive_keep_days', String(Math.max(7, Math.min(365, parseInt(b.keep_days, 10) || 30))));
+  if ('url' in b) {
+    const url = String(b.url || '').trim();
+    if (url && !/^https:\/\/script\.google\.com\/(macros|a\/macros\/[^/]+)\/s\/[\w-]+\/exec$/.test(url)) throw new HttpError(400, 'Cole o endereço do “App da Web” do Apps Script (começa com https://script.google.com/macros/s/ e termina em /exec).');
+    if (url) { try { await d.call('ping', {}, url); } catch (e) { throw new HttpError(400, `Não consegui falar com o Google: ${e.message}`); } }
+    setSetting('drive_url', url); if (!url) { setSetting('drive_last_error', ''); }
+    audit(req, 'update', 'settings', null, url ? 'Cópia automática no Google Drive ativada' : 'Cópia automática no Google Drive desativada');
+  }
+  res.json(d.status());
+}));
+router.post('/drive/sync', P.requireAdmin, wrap(async (req, res) => {
+  const d = require('../services/drive');
+  let r; try { r = await d.syncNow({ manual: true }); } catch (e) { throw new HttpError(502, `Envio ao Google Drive falhou: ${e.message}`); }
+  audit(req, 'backup', null, null, 'Cópia enviada ao Google Drive');
+  res.json({ ...d.status(), result: r });
+}));
+router.post('/drive/new-key', P.requireAdmin, wrap((req, res) => {
+  setSetting('drive_secret', ''); const d = require('../services/drive'); d.secret();
+  audit(req, 'update', 'settings', null, 'Nova chave da cópia no Google Drive gerada');
+  res.json({ ...d.status(), script: d.appsScript() });
+}));
+
 router.get('/export', P.requireAdmin, wrap((req, res) => {
   const tables = all("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('sessions','password_resets') AND name NOT LIKE 'sqlite_%'").map((t) => t.name);
   const out = { exported_at: nowIso(), tables: {} };

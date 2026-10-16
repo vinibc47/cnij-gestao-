@@ -148,7 +148,8 @@ function dailyBackup() {
 function start() {
   runAutomations(true);
   dailyBackup();
-  setInterval(() => { runAutomations(true); dailyBackup(); }, 10 * 60 * 1000).unref();
+  setInterval(() => { runAutomations(true); dailyBackup(); try { require('./drive').maybeDaily(); } catch (e) { console.error('Drive:', e.message); } }, 10 * 60 * 1000).unref();
+  setTimeout(() => { try { require('./drive').maybeDaily(); } catch {} }, 60 * 1000).unref();
 }
 
 module.exports = { start, runAutomations, syncReminders, notify, backupNow, BACKUP_DIR, managerUsers, financeUsers };

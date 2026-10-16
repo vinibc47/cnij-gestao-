@@ -31,8 +31,14 @@ netfilter-persistent save >/dev/null 2>&1 || true
 # Baixa o sistema (mantém a pasta de dados)
 mkdir -p $BASE/dados
 rm -rf $BASE/app.new && mkdir -p $BASE/app.new
-curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/heads/main" | tar xz --strip-components=1 -C $BASE/app.new
-[ -f $BASE/app.new/package.json ] || { echo "ERRO: não encontrei o sistema no repositório $REPO (ele precisa ser público e ter o package.json na raiz)."; exit 1; }
+# Repositório privado: guarde um token de leitura do GitHub em /opt/cnij/.github-token
+TOKEN=""; [ -f $BASE/.github-token ] && chmod 600 $BASE/.github-token && TOKEN=$(tr -d ' \r\n' < $BASE/.github-token)
+if [ -n "$TOKEN" ]; then
+  curl -fsSL -H "Authorization: Bearer $TOKEN" "https://api.github.com/repos/$REPO/tarball/main" | tar xz --strip-components=1 -C $BASE/app.new
+else
+  curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/heads/main" | tar xz --strip-components=1 -C $BASE/app.new
+fi
+[ -f $BASE/app.new/package.json ] || { echo "ERRO: não encontrei o sistema no repositório $REPO (se ele for privado, salve o token em $BASE/.github-token)."; exit 1; }
 rm -rf $BASE/app && mv $BASE/app.new $BASE/app
 
 # Endereço do site: domínio próprio ou um endereço gratuito baseado no IP (sslip.io)
@@ -103,7 +109,13 @@ cd $BASE && docker compose up -d --build && docker compose restart caddy
 # Atalho para atualizar depois:  sudo cnij-atualizar
 cat > /usr/local/bin/cnij-atualizar <<UPD
 #!/bin/bash
-curl -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/instalar-servidor.sh" | bash -s -- "$REPO" "\${1:-}"
+# baixa o instalador mais recente (com token, se o repositório for privado) e roda de novo
+T=""; [ -f $BASE/.github-token ] && T=\$(tr -d ' \\r\\n' < $BASE/.github-token)
+if [ -n "\$T" ]; then
+  curl -fsSL -H "Authorization: Bearer \$T" -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/$REPO/contents/scripts/instalar-servidor.sh?ref=main" | bash -s -- "$REPO" "\${1:-}"
+else
+  curl -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/instalar-servidor.sh" | bash -s -- "$REPO" "\${1:-}"
+fi
 UPD
 chmod +x /usr/local/bin/cnij-atualizar
 
