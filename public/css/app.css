@@ -941,3 +941,5 @@ html, body { background: var(--g-bg); }
 .pt-parcels { display: flex; flex-direction: column; margin-top: 10px; }
 .pt-parcel { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line-2); font-size: 13.5px; }
 @media (max-width: 720px) { .pt-tot { width: 100%; justify-content: space-between; } .pt-tot > div { align-items: flex-start; } .pt-parcel { flex-direction: column; } .pt-parcel .right { align-items: flex-start !important; } }
+.drive-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 12px; font-size: 13.5px; line-height: 1.55; }
+.drive-steps .input { height: 36px; border: 1px solid var(--g-line); border-radius: 8px; padding: 0 10px; font: inherit; font-size: 13px; background: #fff; }

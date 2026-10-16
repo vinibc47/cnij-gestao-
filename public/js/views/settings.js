@@ -133,13 +133,57 @@ const T = {
       ['alert_days_documents', 'Avisar documentos vencendo com antecedência de (dias)', 'number'], ['recurring_months_ahead', 'Gerar despesas recorrentes com quantos meses de antecedência', 'number']], ctx);
   },
   async backup(body) {
-    const list = await api.get('/admin/backups');
-    const box = el(html`<div class="grid g3"><div class="card span2"><div class="card-head"><h3>Backups do banco de dados</h3><button class="btn sm primary" data-now>${icon('download', 'sm')} Gerar backup agora</button></div>
-      <p class="small muted" style="margin-top:0">Um backup automático é criado todos os dias (mantidos os últimos 30). Guarde cópias fora do servidor periodicamente. A pasta <code>uploads/</code> contém os arquivos anexados e também deve ser copiada.</p>
-      ${list.length ? html`<div class="list">${list.map((b) => html`<div class="list-item"><div class="grow"><div class="li-title">${b.name}</div><div class="li-sub">${datetime(new Date(b.date).toISOString().replace('T', ' '))} · ${bytes(b.size)}</div></div><a class="btn xs" href="/api/admin/backups/${encodeURIComponent(b.name)}">${icon('download', 'sm')} Baixar</a></div>`)}</div>` : html`<div class="empty sm">Nenhum backup ainda.</div>`}</div>
+    const [list, dr] = await Promise.all([api.get('/admin/backups'), api.get('/admin/drive')]);
+    const lastRes = dr.last_result || {};
+    const box = el(html`<div class="col" style="gap:16px">
+      <div class="card"><div class="card-head"><h3>Salvar uma cópia completa</h3></div>
+        <p class="small muted" style="margin-top:0">Baixa para o seu computador um arquivo .zip com <b>tudo</b>: banco de dados (clientes, projetos, financeiro, usuários) e todos os arquivos anexados (PDFs, fotos, comprovantes). Guarde em local seguro — contém dados pessoais de clientes.</p>
+        <a class="btn primary" href="/api/admin/backup-full" data-full>${icon('download')} Baixar cópia completa (.zip)</a></div>
+
+      <div class="card"><div class="card-head"><h3>Cópia automática no Google Drive</h3>${dr.url ? html`<span class="badge ${dr.last_error ? 'danger' : 'success'}">${dr.last_error ? 'Com erro' : 'Ativa'}</span>` : html`<span class="badge muted">Desativada</span>`}</div>
+        ${dr.url ? html`<div class="split-rows small">
+            <div><span>Último envio com sucesso</span><b>${dr.last_ok ? datetime(dr.last_ok) : 'ainda não'}</b></div>
+            <div><span>Arquivos anexados já enviados</span><b>${dr.files_sent}</b></div>
+            <div><span>Cópias diárias do banco mantidas</span><b>${dr.keep_days} dias (+ o dia 1º de cada mês)</b></div></div>
+          ${dr.last_error ? html`<div class="note-box info mt-8">${icon('alert', 'sm')}<div><b>Último erro:</b> ${dr.last_error}</div></div>` : ''}
+          ${lastRes.pending ? html`<p class="small muted">Ainda há arquivos na fila — eles vão nas próximas rodadas (a cada hora).</p>` : ''}
+          ${dr.files_big.length ? html`<details class="mt-8"><summary class="small">${dr.files_big.length} arquivo(s) acima de 20 MB não vão para o Drive automaticamente — estão na cópia completa (.zip)</summary><ul class="small muted">${dr.files_big.map((f) => html`<li>${f.path} · ${bytes(f.size)}</li>`)}</ul></details>` : ''}
+          <div class="row wrap gap-8 mt-16"><button class="btn primary" data-sync>${icon('upload', 'sm')} Enviar agora</button><button class="btn" data-setup>Alterar configuração</button><button class="btn ghost" data-off>Desativar</button></div>`
+        : html`<p class="small muted" style="margin-top:0">Todo dia o sistema envia uma cópia do banco de dados e os arquivos novos para uma pasta do Google Drive do escritório. Se o servidor tiver qualquer problema, os dados continuam lá. Configuração única de uns 5 minutos.</p>
+          <button class="btn primary" data-setup>${icon('settings', 'sm')} Configurar agora</button>`}
+        <div data-wiz class="hidden mt-16"></div></div>
+
+      <div class="grid g3"><div class="card span2"><div class="card-head"><h3>Backups no servidor</h3><button class="btn sm" data-now>${icon('download', 'sm')} Baixar só o banco de dados</button></div>
+        <p class="small muted" style="margin-top:0">O servidor também guarda uma cópia do banco por dia (últimos 30 dias). Essas ficam na mesma máquina — por isso a cópia no Google Drive e a cópia completa acima são importantes.</p>
+        ${list.length ? html`<div class="list">${list.slice(0, 10).map((b) => html`<div class="list-item"><div class="grow"><div class="li-title">${b.name}</div><div class="li-sub">${datetime(new Date(b.date).toISOString().replace('T', ' '))} · ${bytes(b.size)}</div></div><a class="btn xs" href="/api/admin/backups/${encodeURIComponent(b.name)}">${icon('download', 'sm')} Baixar</a></div>`)}</div>` : html`<div class="empty sm">Nenhum backup ainda.</div>`}</div>
       <div class="card"><div class="card-head"><h3>Exportar dados</h3></div><p class="small muted" style="margin-top:0">Exporta todas as informações do sistema em formato JSON (sem senhas), para arquivo ou migração.</p><a class="btn" href="/api/admin/export">${icon('download')} Exportar tudo (JSON)</a>
-      <div class="eyebrow mt-24 mb-8">Segurança</div><ul class="small muted" style="padding-left:18px;margin:0;line-height:1.8"><li>Senhas criptografadas (bcrypt)</li><li>Sessões com cookie seguro (HttpOnly)</li><li>Bloqueio após tentativas de login</li><li>Permissões por nível e por projeto</li><li>Área do cliente isolada dos dados internos</li><li>Registro de todas as alterações</li></ul></div></div>`);
-    box.querySelector('[data-now]').onclick = async () => { const r = await api.post('/admin/backups'); toast('Backup gerado.'); location.href = `/api/admin/backups/${encodeURIComponent(r.name)}`; setTimeout(() => { body.innerHTML = ''; T.backup(body); }, 800); };
+      <div class="eyebrow mt-24 mb-8">Segurança</div><ul class="small muted" style="padding-left:18px;margin:0;line-height:1.8"><li>Senhas criptografadas (bcrypt)</li><li>Sessões com cookie seguro (HttpOnly)</li><li>Bloqueio após tentativas de login</li><li>Permissões por nível e por projeto</li><li>Área do cliente isolada dos dados internos</li><li>Registro de todas as alterações</li></ul></div></div></div>`);
+    const reload = () => { body.innerHTML = ''; T.backup(body); };
+    box.querySelector('[data-now]').onclick = async () => { const r = await api.post('/admin/backups'); toast('Backup gerado.'); location.href = `/api/admin/backups/${encodeURIComponent(r.name)}`; setTimeout(reload, 800); };
+    box.querySelector('[data-full]').onclick = () => toast('Preparando a cópia completa… o download começa em instantes.', { ms: 5000 });
+    const sy = box.querySelector('[data-sync]'); if (sy) sy.onclick = async () => { sy.disabled = true; sy.textContent = 'Enviando…'; try { const r = await api.post('/admin/drive/sync'); toast(`Cópia enviada ao Google Drive${r.result && r.result.files ? ` · ${r.result.files} arquivo(s) novo(s)` : ''}.`); } catch (e) { fail(e); } reload(); };
+    const off = box.querySelector('[data-off]'); if (off) off.onclick = async () => { if (!(await confirmDialog('Desativar a cópia automática no Google Drive? As cópias já enviadas continuam no Drive.', { ok: 'Desativar' }))) return; await api.put('/admin/drive', { url: '' }); reload(); };
+    box.querySelector('[data-setup]').onclick = () => {
+      const w = box.querySelector('[data-wiz]'); w.classList.remove('hidden');
+      w.innerHTML = toHTML(html`<ol class="drive-steps">
+        <li>Entre na conta Google do escritório e abra <a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener"><b>script.google.com → Novo projeto</b></a>.</li>
+        <li>Apague o que estiver escrito, clique em <b>Copiar código</b> abaixo e cole lá. Salve (ícone de disquete).<div class="mt-8"><button class="btn sm" data-copy>${icon('copy', 'sm')} Copiar código</button> <span class="small muted">O código já tem uma chave secreta só deste sistema.</span></div></li>
+        <li>Clique em <b>Implantar → Nova implantação</b>. Na engrenagem, escolha <b>App da Web</b>. Em “Executar como”: <b>Eu</b>. Em “Quem pode acessar”: <b>Qualquer pessoa</b>. Clique em <b>Implantar</b>.</li>
+        <li>O Google vai pedir autorização: <b>Autorizar acesso</b> → escolha a conta → <b>Avançado → Acessar (não seguro)</b> → <b>Permitir</b>. (O aviso aparece porque o script é seu e não passou por revisão do Google; ele só mexe na pasta de cópias.)</li>
+        <li>Copie o <b>URL do app da Web</b> (termina em <code>/exec</code>) e cole aqui:
+          <div class="row wrap gap-8 mt-8"><input class="input grow" data-url placeholder="https://script.google.com/macros/s/…/exec" value="${dr.url || ''}" style="min-width:240px">
+          <label class="small muted row gap-4">Manter <input type="number" class="input" data-keep value="${dr.keep_days}" min="7" max="365" style="width:70px"> dias</label>
+          <button class="btn primary" data-save>Testar e salvar</button></div></li></ol>
+        <p class="small muted">A pasta “CN&IJ Gestão — cópias de segurança” aparece no seu Drive. Não compartilhe essa pasta: ela contém dados de clientes.</p>`);
+      w.querySelector('[data-copy]').onclick = async () => { const { copyText } = await import('../lib.js'); toast((await copyText(dr.script)) ? 'Código copiado. Cole no Apps Script.' : 'Não foi possível copiar automaticamente.'); };
+      w.querySelector('[data-save]').onclick = async (e) => {
+        e.target.disabled = true; e.target.textContent = 'Testando…';
+        try { await api.put('/admin/drive', { url: w.querySelector('[data-url]').value, keep_days: w.querySelector('[data-keep]').value }); toast('Conexão com o Google Drive funcionando. Enviando a primeira cópia…', { ms: 5000 });
+          try { await api.post('/admin/drive/sync'); toast('Primeira cópia enviada ao Google Drive.'); } catch (err) { fail(err); }
+          reload(); } catch (err) { fail(err); e.target.disabled = false; e.target.textContent = 'Testar e salvar'; }
+      };
+      w.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
     body.appendChild(box);
   },
   async auditoria(body) {
