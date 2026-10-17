@@ -9,14 +9,14 @@
 const { HttpError } = require('./util');
 
 const ALL = ['dashboard', 'financeiro', 'projetos', 'obras', 'tarefas', 'clientes', 'propostas', 'contratos', 'recibos', 'fornecedores',
-  'agenda', 'atas', 'placas', 'documentos', 'relatorios', 'configuracoes'];
+  'agenda', 'atas', 'placas', 'apresentacoes', 'documentos', 'relatorios', 'configuracoes'];
 
 function modulesFor(u) {
   if (!u) return [];
   switch (u.role) {
     case 'admin': return ALL.slice();
     case 'gestor': return ALL.filter((m) => m !== 'configuracoes' && (!['financeiro', 'recibos'].includes(m) || u.can_finance));
-    case 'colaborador': return ['dashboard', 'projetos', 'obras', 'tarefas', 'agenda', 'atas', 'placas', 'documentos', 'fornecedores'];
+    case 'colaborador': return ['dashboard', 'projetos', 'obras', 'tarefas', 'agenda', 'atas', 'placas', 'apresentacoes', 'documentos', 'fornecedores'];
     case 'estagiario': return ['dashboard', 'projetos', 'tarefas', 'agenda', 'atas', 'documentos'];
     default: return [];
   }

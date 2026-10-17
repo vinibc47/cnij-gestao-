@@ -56,7 +56,7 @@ const MIGRATIONS = {
   // capa do portal (arquivo original preservado; recorte apenas visual) e próxima etapa informada ao cliente
   projects: { cover_doc_id: 'INTEGER', cover_x: 'REAL', cover_y: 'REAL', cover_zoom: 'REAL', cover_display: 'TEXT', next_step: 'TEXT', next_step_due: 'TEXT' },
   // materiais da aba "Veja seu projeto"
-  documents: { showcase: 'INTEGER NOT NULL DEFAULT 0', portal_title: 'TEXT', portal_desc: 'TEXT', portal_group: 'TEXT', portal_order: 'INTEGER', replaced_by: 'INTEGER', published_at: 'TEXT' },
+  documents: { img_w: 'INTEGER', img_h: 'INTEGER', img_orient: 'INTEGER', showcase: 'INTEGER NOT NULL DEFAULT 0', portal_title: 'TEXT', portal_desc: 'TEXT', portal_group: 'TEXT', portal_order: 'INTEGER', replaced_by: 'INTEGER', published_at: 'TEXT' },
   // separação financeira: caixa do escritório × financeiro das obras
   expenses: {
     flow: "TEXT NOT NULL DEFAULT 'escritorio'",   // escritorio = despesa própria · obra = custo/pagamento da obra

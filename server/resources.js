@@ -71,7 +71,7 @@ R.projects = {
            FROM projects p LEFT JOIN clients c ON c.id = p.client_id LEFT JOIN users u ON u.id = p.manager_id`,
   search: ['p.name', 'p.code', 'c.name', 'p.city', 'p.address'], sort: 'p.due_date IS NULL, p.due_date ASC', archivable: true,
   fields: [
-    F('name', 'Nome do projeto', 'text', { required: true }), F('code', 'Código', 'text', { readonly: true }),
+    F('name', 'Nome do projeto', 'text', { required: true }), F('code', 'Código', 'text', { placeholder: 'Ex.: AP_2026_006', hint: 'Gerado automaticamente; pode ser trocado pelo código usado pelo escritório.' }),
     F('client_id', 'Cliente', 'ref', { ref: 'clients', filter: true }),
     F('type', 'Tipo de projeto', 'option', { opt: 'projeto_tipo', filter: true }),
     F('status', 'Status', 'select', { list: 'PROJECT_STATUS', default: 'ativo', filter: true }),
@@ -90,7 +90,7 @@ R.projects = {
   write: (u, row) => managers(u) || (row && row.manager_id === u.id),
   create: managers,
   remove: (u) => u.role === 'admin',
-  beforeCreate: (d, u) => { d.code = proj.nextCode('projects', 'P'); d.created_by = u.id; if (!d.manager_id) d.manager_id = u.id; },
+  beforeCreate: (d, u) => { if (!d.code) d.code = proj.nextCode('projects', 'P'); d.created_by = u.id; if (!d.manager_id) d.manager_id = u.id; },
   beforeUpdate: (d, row) => {
     if (d.status === 'encerrado' && row.status !== 'encerrado') d.closed_at = today();
     if (d.status && d.status !== 'encerrado' && row.status === 'encerrado') d.closed_at = null;

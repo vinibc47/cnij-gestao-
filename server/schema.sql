@@ -717,3 +717,19 @@ CREATE TABLE IF NOT EXISTS portal_notices (
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Apresentações (gerador no padrão visual do escritório). O conteúdo de edição fica em "data" (JSON);
+-- cada publicação guarda uma versão imutável com o PDF gerado (documento visível ao cliente).
+CREATE TABLE IF NOT EXISTS presentations (
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  number INTEGER NOT NULL, title TEXT, data TEXT NOT NULL DEFAULT '{}', rev INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'rascunho', published_version INTEGER, published_doc_id INTEGER, published_rev INTEGER, published_at TEXT,
+  archived INTEGER NOT NULL DEFAULT 0, duplicated_from INTEGER,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS ix_presentations_project ON presentations(project_id, archived);
+CREATE TABLE IF NOT EXISTS presentation_versions (
+  id INTEGER PRIMARY KEY, presentation_id INTEGER NOT NULL REFERENCES presentations(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL, data TEXT NOT NULL, doc_id INTEGER, note TEXT,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS ix_presentation_versions ON presentation_versions(presentation_id, version);
