@@ -21,6 +21,13 @@ export default async function portal(root) {
   const st = { pid: Number(sessionStorage.getItem('portal_pid')) || null, tab: sessionStorage.getItem('portal_tab') || 'visao', sub: 'orcamentos', focus: null, cmpItem: null, cmpSel: null };
   if (!d.projects.find((p) => p.id === st.pid)) st.pid = d.projects[0] ? d.projects[0].id : null;
   if (!TABS.find((t) => t[0] === st.tab)) st.tab = 'visao';
+  // link recebido pelo WhatsApp (?abrir=doc-ID): abre o projeto certo em "Veja seu projeto"
+  const ab = new URLSearchParams(location.search).get('abrir');
+  if (ab && /^doc-\d+$/.test(ab)) {
+    const id = Number(ab.slice(4)); const pr = d.projects.find((x) => (x.showcase || []).some((m) => m.id === id) || (x.documents || []).some((m) => m.id === id));
+    if (pr) { st.pid = pr.id; st.tab = (pr.showcase || []).some((m) => m.id === id) ? 'projeto' : 'documentos'; st.focus = ab; sessionStorage.setItem('portal_pid', pr.id); }
+    history.replaceState(null, '', location.pathname + location.hash);
+  }
 
   const go = (tab, sub, focus) => { st.tab = tab; if (sub) st.sub = sub; st.focus = focus || null; sessionStorage.setItem('portal_tab', tab); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 

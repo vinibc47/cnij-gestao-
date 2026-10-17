@@ -18,6 +18,7 @@ const NAV = [
   ['agenda', 'agenda', 'Agenda', 'calendar'],
   ['atas', 'atas', 'Ata de Reunião', 'diary'],
   ['placas', 'placas', 'Criar placa de obra', 'sign'],
+  ['apresentacoes', 'apresentacoes', 'Apresentações', 'frame'],
   ['documentos', 'documentos', 'Documentos', 'docs'],
   ['relatorios', 'relatorios', 'Relatórios', 'chart'],
   ['configuracoes', 'configuracoes', 'Configurações', 'settings'],
@@ -28,7 +29,7 @@ const VIEWS = {
   propostas: () => import('./views/commercial.js'), contratos: () => import('./views/commercial.js'), fornecedores: () => import('./views/suppliers.js'),
   agenda: () => import('./views/agenda.js'), documentos: () => import('./views/documents.js'), relatorios: () => import('./views/reports.js'),
   configuracoes: () => import('./views/settings.js'), notificacoes: () => import('./views/notifications.js'),
-  recibos: () => import('./views/receipts.js'), atas: () => import('./views/minutes.js'), placas: () => import('./views/signs.js'),
+  recibos: () => import('./views/receipts.js'), atas: () => import('./views/minutes.js'), placas: () => import('./views/signs.js'), apresentacoes: () => import('./views/presentations.js'),
 };
 const MODULE_OF = { '': 'dashboard', notificacoes: 'dashboard' };
 

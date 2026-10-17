@@ -104,6 +104,7 @@ async function detail(ctx, id) {
     can('placas') ? { label: 'Criar placa de obra', icon: 'sign', fn: async () => { try { const sg = await api.post('/signs', { project_id: id }); ctx.go(`#/placas/${sg.id}`); } catch (er) { fail(er); } } } : null,
     { label: 'Nova reunião', icon: 'calendar', fn: () => openForm('events', { values: { project_id: id, client_id: p.client_id, type: 'reuniao' }, onSaved: reload }) },
     { label: 'Lançar horas', icon: 'clock', fn: () => openForm('time_entries', { values: { project_id: id }, onSaved: reload }) },
+    can('apresentacoes') ? { label: 'Apresentações do projeto', icon: 'frame', fn: () => (location.hash = `#/apresentacoes?projeto=${id}`) } : null,
     fin ? { label: 'Nova receita do projeto', icon: 'in', fn: () => newEntry('incomes', { project_id: id, client_id: p.client_id }, reload) } : null,
     fin ? { label: 'Nova despesa do escritório (projeto)', icon: 'out', fn: () => newEntry('expenses', { project_id: id, flow: 'escritorio' }, reload) } : null,
     fin ? { label: 'Lançar item da obra', icon: 'out', fn: () => obraItemDrawer({ id, name: p.name }, {}, reload) } : null,

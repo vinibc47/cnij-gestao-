@@ -95,7 +95,7 @@ const T = {
   },
   async listas(body, ctx) {
     const opts = await api.get('/admin/options');
-    const kinds = [['despesa', 'Categorias de despesa'], ['receita', 'Categorias de receita'], ['projeto_tipo', 'Tipos de projeto'], ['fornecedor', 'Categorias de fornecedor / itens de orçamento'], ['documento', 'Categorias de documento'], ['origem_cliente', 'Origem do cliente']];
+    const kinds = [['despesa', 'Categorias de despesa'], ['receita', 'Categorias de receita'], ['projeto_tipo', 'Tipos de projeto'], ['fornecedor', 'Categorias de fornecedor / itens de orçamento'], ['documento', 'Categorias de documento'], ['origem_cliente', 'Origem do cliente'], ['ambiente', 'Ambientes (apresentações)'], ['conta', 'Contas do escritório']];
     const box = el(html`<div class="grid g3">${kinds.map(([k, l]) => html`<div class="card"><div class="card-head"><h3>${l}</h3></div>
       <div class="list">${opts.filter((o) => o.kind === k).map((o) => html`<div class="list-item" style="padding:7px 0"><span class="grow ${o.archived ? 'muted-2' : ''}" style="${o.archived ? 'text-decoration:line-through' : ''}">${o.name}</span>
         <button class="icon-btn" data-ren="${o.id}" title="Renomear">${icon('edit', 'sm')}</button><button class="icon-btn" data-arc="${o.id}" data-v="${o.archived ? 0 : 1}" title="${o.archived ? 'Reativar' : 'Desativar'}">${icon(o.archived ? 'refresh' : 'archive', 'sm')}</button></div>`)}</div>
