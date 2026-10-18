@@ -37,8 +37,8 @@ module.exports = {
     ['concluida', 'Concluída', 'success'], ['cancelada', 'Cancelada', 'muted'],
   ]),
   WORK_LOG_KIND: S([
-    ['registro', 'Registro', 'neutral'], ['visita', 'Visita técnica', 'info'], ['problema', 'Problema', 'danger'],
-    ['decisao', 'Decisão', 'accent'], ['medicao', 'Medição', 'neutral'],
+    ['visita', 'Visita técnica', 'info'], ['registro', 'Atualização da obra', 'neutral'], ['problema', 'Ocorrência', 'danger'],
+    ['outro', 'Outro', 'neutral'], ['decisao', 'Decisão', 'accent'], ['medicao', 'Medição', 'neutral'],
   ]),
   TASK_PRIORITY: S([
     ['baixa', 'Baixa', 'muted'], ['normal', 'Normal', 'neutral'], ['alta', 'Alta', 'warning'], ['urgente', 'Urgente', 'danger'],

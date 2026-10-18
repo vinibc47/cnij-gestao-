@@ -89,7 +89,7 @@ router.get('/works/:id/overview', wrap((req, res) => {
   }));
   const out = {
     work, project: get('SELECT id, name, client_id, status FROM projects WHERE id = ?', work.project_id),
-    phases: L('work_phases', u, { f_work_id: id, sort: 'position' }), logs,
+    phases: L('work_phases', u, { f_work_id: id, sort: 'position' }).filter((p) => !p.archived), logs,
     quotes: L('quotes', u, { f_project_id: work.project_id }),
     documents: docs.filter((d) => !(d.mime || '').startsWith('image/')), photos: [...docs.filter((d) => (d.mime || '').startsWith('image/')), ...logDocs.filter((d) => (d.mime || '').startsWith('image/'))],
     tasks: L('tasks', u, { f_work_id: id }),
@@ -304,6 +304,12 @@ router.post('/files', upload.array('files', 20), wrap((req, res) => {
     if (meta.project_id && !P.isManager(u) && !P.canAccessProject(u, meta.project_id)) throw new HttpError(403, 'Sem acesso a este projeto.');
     if (!P.isManager(u) && !meta.project_id && !entity) throw new HttpError(403, 'Vincule o documento a um projeto.');
   } catch (e) { files.forEach((f) => fs.unlink(f.path, () => {})); throw e; }
+  // reenvio da mesma foto (nova tentativa após falha de conexão): devolve o arquivo já gravado, sem duplicar
+  const key = b.upload_key ? String(b.upload_key).slice(0, 80) : null;
+  if (key && files.length === 1) {
+    const prev = get('SELECT * FROM documents WHERE upload_key = ?', key);
+    if (prev) { files.forEach((f) => fs.unlink(f.path, () => {})); return res.status(200).json({ ids: [prev.id], rows: [prev], duplicate: true }); }
+  }
   const ids = files.map((f) => {
     const name = Buffer.from(f.originalname, 'latin1').toString('utf8');
     return insert('documents', {
@@ -312,7 +318,7 @@ router.post('/files', upload.array('files', 20), wrap((req, res) => {
       expires_at: b.expires_at || null, issued_at: b.issued_at || null, client_visible: b.client_visible === '1' || b.client_visible === 'true' ? 1 : 0,
       published_at: b.client_visible === '1' || b.client_visible === 'true' ? nowIso() : null,
       showcase: (b.client_visible === '1' || b.client_visible === 'true' || b.showcase === '1') && (b.showcase === '1' || /^(image|video)\//.test(f.mimetype) || /apresenta/i.test(b.category || '')) && !['work_logs', 'incomes', 'quotes', 'expenses'].includes(entity || '') ? 1 : 0,
-      notes: b.notes || null, uploaded_by: u.id, created_at: nowIso(),
+      notes: b.notes || null, uploaded_by: u.id, created_at: nowIso(), upload_key: key && files.length === 1 ? key : null,
     });
   });
   audit(req, 'upload', entity || 'documents', entityId || ids[0], `${ids.length} arquivo(s) enviado(s)`);

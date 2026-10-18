@@ -776,7 +776,7 @@ router.get('/pdf/work-budget/:id', wrap(async (req, res) => {
 
 router.get('/pdf/work-phases/:id', wrap(async (req, res) => {
   const work = fetchOne(R.works, req.user, Number(req.params.id));
-  const phases = all('SELECT wp.*, s.company supplier_name FROM work_phases wp LEFT JOIN suppliers s ON s.id = wp.supplier_id WHERE wp.work_id = ? ORDER BY wp.position, wp.id', work.id);
+  const phases = all('SELECT wp.*, s.company supplier_name FROM work_phases wp LEFT JOIN suppliers s ON s.id = wp.supplier_id WHERE wp.work_id = ? AND COALESCE(wp.archived,0) = 0 AND COALESCE(wp.applicable,1) = 1 ORDER BY wp.position, wp.id', work.id);
   const list = [];
   if (!phases.length) list.push('Cadastre as etapas da obra antes de gerar o PDF.');
   if (req.query.check === '1') return res.json({ ok: !list.length, problems: list });

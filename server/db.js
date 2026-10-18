@@ -56,7 +56,7 @@ const MIGRATIONS = {
   // capa do portal (arquivo original preservado; recorte apenas visual) e próxima etapa informada ao cliente
   projects: { cover_doc_id: 'INTEGER', cover_x: 'REAL', cover_y: 'REAL', cover_zoom: 'REAL', cover_display: 'TEXT', next_step: 'TEXT', next_step_due: 'TEXT' },
   // materiais da aba "Veja seu projeto"
-  documents: { img_w: 'INTEGER', img_h: 'INTEGER', img_orient: 'INTEGER', showcase: 'INTEGER NOT NULL DEFAULT 0', portal_title: 'TEXT', portal_desc: 'TEXT', portal_group: 'TEXT', portal_order: 'INTEGER', replaced_by: 'INTEGER', published_at: 'TEXT' },
+  documents: { upload_key: 'TEXT', img_w: 'INTEGER', img_h: 'INTEGER', img_orient: 'INTEGER', showcase: 'INTEGER NOT NULL DEFAULT 0', portal_title: 'TEXT', portal_desc: 'TEXT', portal_group: 'TEXT', portal_order: 'INTEGER', replaced_by: 'INTEGER', published_at: 'TEXT' },
   // separação financeira: caixa do escritório × financeiro das obras
   expenses: {
     flow: "TEXT NOT NULL DEFAULT 'escritorio'",   // escritorio = despesa própria · obra = custo/pagamento da obra
@@ -74,7 +74,9 @@ const MIGRATIONS = {
   },
   contracts: { service_type: 'TEXT', template_id: 'INTEGER', template_version: 'INTEGER', body: 'TEXT', data: 'TEXT', payment_plan: 'TEXT' },
   works: { budget_notes: 'TEXT' },
-  work_phases: { responsible: 'TEXT', pending: 'TEXT', next_action: 'TEXT' },
+  work_phases: { responsible: 'TEXT', pending: 'TEXT', next_action: 'TEXT', applicable: 'INTEGER NOT NULL DEFAULT 1', archived: 'INTEGER NOT NULL DEFAULT 0', completed_at: 'TEXT' },
+  work_logs: { title: 'TEXT', status: "TEXT NOT NULL DEFAULT 'rascunho'", services: 'TEXT', participants: 'TEXT', internal_notes: 'TEXT', client_note: 'TEXT',
+    client_key: 'TEXT', created_by: 'INTEGER', updated_at: 'TEXT', published_at: 'TEXT', published_by: 'INTEGER', phase_changes: 'TEXT', next_steps: 'TEXT', save_key: 'TEXT' },
 };
 // Propostas podem existir antes do cadastro do cliente (interessado): client_id deixa de ser obrigatório.
 // O SQLite não altera restrições de coluna, então a tabela é recriada preservando todos os dados.
@@ -126,6 +128,10 @@ function migrate() {
     run("UPDATE expenses SET flow = 'obra' WHERE paid_by = 'cliente'");
     setSetting('mig_flow_v1', '1');
   }
+  if (getSetting('mig_diary_v1', '') !== '1') {
+    run("UPDATE work_logs SET status = CASE WHEN client_visible = 1 THEN 'publicado' ELSE 'rascunho' END, published_at = CASE WHEN client_visible = 1 THEN created_at END");
+    setSetting('mig_diary_v1', '1');
+  }
   // uma vez: imagens, vídeos e apresentações já liberadas continuam aparecendo na nova aba "Veja seu projeto"
   if (getSetting('mig_showcase_v1') === null) {
     run("UPDATE documents SET showcase = 1, published_at = COALESCE(published_at, created_at) WHERE client_visible = 1 AND (mime LIKE 'image/%' OR mime LIKE 'video/%' OR lower(COALESCE(category,'')) LIKE '%apresenta%') AND COALESCE(entity,'') NOT IN ('work_logs','incomes','quotes')");
@@ -137,6 +143,9 @@ function migrate() {
   run("UPDATE proposals SET status = 'enviada' WHERE status IN ('visualizada','negociacao')");
 }
 migrate();
+run("CREATE UNIQUE INDEX IF NOT EXISTS ux_work_logs_key ON work_logs(client_key) WHERE client_key IS NOT NULL");
+run("CREATE UNIQUE INDEX IF NOT EXISTS ux_work_pend_key ON work_pendencies(client_key) WHERE client_key IS NOT NULL");
+run("CREATE UNIQUE INDEX IF NOT EXISTS ux_documents_upload ON documents(upload_key) WHERE upload_key IS NOT NULL");
 
 // ---------- Dados iniciais (somente configuração, nunca dados fictícios) ----------
 function seedDefaults() {

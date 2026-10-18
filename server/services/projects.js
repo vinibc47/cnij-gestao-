@@ -40,7 +40,8 @@ function allPhasesDone(projectId) {
   return total > 0 && total === done;
 }
 function recomputeWorkProgress(workId) {
-  const r = get('SELECT COUNT(*) n, AVG(progress) avg FROM work_phases WHERE work_id = ?', workId);
+  // critério único: média do % executado das etapas que se aplicam a esta obra (ignora "não se aplica" e arquivadas)
+  const r = get('SELECT COUNT(*) n, AVG(progress) avg FROM work_phases WHERE work_id = ? AND COALESCE(applicable,1) = 1 AND COALESCE(archived,0) = 0', workId);
   if (r && r.n) run('UPDATE works SET progress = ? WHERE id = ?', Math.round(r.avg), workId);
 }
 

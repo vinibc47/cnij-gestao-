@@ -45,9 +45,14 @@ router.get('/overview', wrap((req, res) => {
     ['cover_doc_id', 'cover_x', 'cover_y', 'cover_zoom', 'next_step', 'next_step_due'].forEach((k) => delete p[k]);
     p.works = all('SELECT id, name, status, progress, start_date, due_date FROM works WHERE project_id = ? AND archived = 0', p.id).map((w) => ({
       ...w,
-      phases: all('SELECT name, status, progress FROM work_phases WHERE work_id = ? ORDER BY position', w.id),
-      updates: all("SELECT id, date, kind, description, decisions FROM work_logs WHERE work_id = ? AND client_visible = 1 ORDER BY date DESC LIMIT 20", w.id)
-        .map((l) => ({ ...l, photos: all("SELECT id, title, mime FROM documents WHERE entity = 'work_logs' AND entity_id = ? AND mime LIKE 'image/%' AND archived = 0", l.id) })),
+      phases: all('SELECT name, status, progress, due_date FROM work_phases WHERE work_id = ? AND COALESCE(applicable,1) = 1 AND COALESCE(archived,0) = 0 ORDER BY position', w.id),
+      // somente registros publicados; observações internas, problemas e rascunhos não saem daqui
+      updates: all("SELECT id, date, kind, title, description, decisions, services, client_note, next_steps FROM work_logs WHERE work_id = ? AND client_visible = 1 ORDER BY date DESC, id DESC LIMIT 40", w.id)
+        .map((l) => ({ id: l.id, date: l.date, kind: l.kind, title: l.title, description: l.description, decisions: l.decisions, client_note: l.client_note,
+          services: J(l.services || '[]', []).map((x) => ({ name: x.name, status: x.status })),
+          next: all("SELECT text, responsible, due_date, status FROM work_pendencies WHERE client_visible = 1 AND id IN (SELECT value FROM json_each(COALESCE(?, '[]')))", l.next_steps),
+          photos: all("SELECT id, title, mime FROM documents WHERE entity = 'work_logs' AND entity_id = ? AND mime LIKE 'image/%' AND archived = 0 ORDER BY id", l.id) })),
+      pendencies: all("SELECT text, responsible, due_date FROM work_pendencies WHERE work_id = ? AND client_visible = 1 AND status = 'aberta' ORDER BY COALESCE(due_date,'9999'), id", w.id),
     }));
     const docs = all(`SELECT d.id, d.title, d.category, d.file_name, d.mime, d.size, d.created_at, d.published_at, d.showcase, d.portal_title, d.portal_desc, d.portal_group, d.portal_order, d.replaced_by
                       FROM documents d WHERE d.project_id = ? AND d.client_visible = 1 AND d.archived = 0 AND COALESCE(d.entity,'') NOT IN ('work_logs','incomes','expenses','quotes')
@@ -77,7 +82,7 @@ router.get('/overview', wrap((req, res) => {
         .filter((g) => g.date).map((g) => ({ date: g.date, text: `Orçamento${g.n > 1 ? 's' : ''} de ${g.item} para avaliação`, tab: 'financeiro', sub: 'orcamentos', ref: `cat-${g.item}` })),
       ...p.approvals.map((a) => ({ date: a.created_at.slice(0, 10), text: a.status === 'aprovada' ? `Decisão registrada: ${a.title}` : `Sua decisão é necessária: ${a.title}`, tab: 'financeiro', sub: 'aprovacoes', ref: `apr-${a.id}` })),
       ...p.phases.filter((ph) => ph.completed_at).map((ph) => ({ date: ph.completed_at.slice(0, 10), text: `Etapa concluída: ${ph.name}`, tab: 'andamento' })),
-      ...p.works.flatMap((w) => w.updates.map((l) => ({ date: l.date, text: `Atualização da obra: ${String(l.description || '').slice(0, 90)}`, tab: 'obra' }))),
+      ...p.works.flatMap((w) => w.updates.map((l) => ({ date: l.date, text: `Diário de obra: ${String(l.title || l.description || '').slice(0, 90)}`, tab: 'obra', ref: `log-${l.id}` }))),
       ...p.minutes.map((a) => ({ date: a.date, text: `Ata de reunião: ${a.title || 'Reunião'}`, tab: 'andamento', ref: `ata-${a.id}` })),
     ];
     p.updates = ups.filter((u) => u.date).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 8);

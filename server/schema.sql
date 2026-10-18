@@ -733,3 +733,14 @@ CREATE TABLE IF NOT EXISTS presentation_versions (
   version INTEGER NOT NULL, data TEXT NOT NULL, doc_id INTEGER, note TEXT,
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE INDEX IF NOT EXISTS ix_presentation_versions ON presentation_versions(presentation_id, version);
+
+-- Diário de obra: pendências e próximos passos (um registro só, ligado ao diário que abriu/resolveu)
+CREATE TABLE IF NOT EXISTS work_pendencies (
+  id INTEGER PRIMARY KEY, work_id INTEGER NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+  text TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'pendencia', phase_id INTEGER REFERENCES work_phases(id) ON DELETE SET NULL,
+  responsible TEXT, due_date TEXT, status TEXT NOT NULL DEFAULT 'aberta', client_visible INTEGER NOT NULL DEFAULT 1,
+  created_log_id INTEGER REFERENCES work_logs(id) ON DELETE SET NULL, resolved_log_id INTEGER REFERENCES work_logs(id) ON DELETE SET NULL,
+  client_key TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), resolved_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_work_pendencies ON work_pendencies(work_id, status);
+-- Modelos de etapas salvos a partir de uma obra (somente a estrutura)
+CREATE TABLE IF NOT EXISTS work_templates (id INTEGER PRIMARY KEY, name TEXT NOT NULL, phases TEXT NOT NULL, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));
