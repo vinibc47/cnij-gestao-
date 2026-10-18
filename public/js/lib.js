@@ -430,6 +430,8 @@ export function openForm(resKey, { id, values = {}, title, onSaved, only, exclud
     const save = async () => {
       if (!validate(form)) return;
       let data = readForm(form);
+      // vínculos de contexto (ex.: a obra aberta) que não aparecem no formulário continuam sendo enviados
+      if (!id) Object.entries(values || {}).forEach(([k, v]) => { if (!(k in data) && v !== undefined && v !== null && v !== '' && meta.fields.some((f) => f.name === k)) data[k] = v; });
       if (transform) data = (await transform(data, form)) || data;
       if (data === false) return;
       const b = d.foot.querySelector('[data-save]'); b.disabled = true;

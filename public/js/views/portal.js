@@ -63,6 +63,8 @@ export default async function portal(root) {
       const it = e.target.closest('[data-media]'); if (it) return openMedia(p, Number(it.dataset.media));
       const ap = e.target.closest('[data-approve]'); if (ap) return approve(p, Number(ap.dataset.approve), body);
       const aj = e.target.closest('[data-adjust]'); if (aj) return adjust(p, Number(aj.dataset.adjust));
+      const os = e.target.closest('[data-osub]'); if (os) { st.osub = os.dataset.osub; return render(); }
+      const lp = e.target.closest('[data-logph]'); if (lp) { const log = p.works.flatMap((w) => w.updates).find((u) => u.id === Number(lp.dataset.logph)); if (log) return openPhotos(log.photos, Number(lp.dataset.i)); }
       const inf = e.target.closest('[data-inform]'); if (inf) return informPay(inf.dataset.inform, Number(inf.dataset.id), Number(inf.dataset.amount), inf.dataset.desc);
     });
     const ci = body.querySelector('[data-cmp-item]'); if (ci) ci.onchange = () => { st.cmpItem = ci.value; st.cmpSel = null; render(); };
@@ -113,6 +115,17 @@ export default async function portal(root) {
   render();
 }
 
+// fotos do diário (ampliáveis, com navegação)
+function openPhotos(list, i) {
+  const lb = el('<div class="lightbox" role="dialog" aria-modal="true"></div>');
+  const show = () => { const m = list[i]; lb.innerHTML = toHTML(html`<div class="lb-bar"><span>${m.title || ''}</span><span class="row gap-8"><a class="btn sm" href="${url(m)}" style="background:rgba(255,255,255,.12);color:#fff;border:0">${icon('download', 'sm')}</a><button data-x aria-label="Fechar">${icon('x')}</button></span></div>
+    <div class="lb-body"><img src="${url(m, true)}" alt="${m.title || ''}"></div>${list.length > 1 ? html`<button class="nav-l" data-p aria-label="Anterior">${icon('chevronL')}</button><button class="nav-r" data-n aria-label="Próxima">${icon('chevron')}</button>` : ''}`); };
+  const close = () => { lb.remove(); document.removeEventListener('keydown', key); };
+  const key = (e) => { if (e.key === 'Escape') close(); if (e.key === 'ArrowRight') { i = (i + 1) % list.length; show(); } if (e.key === 'ArrowLeft') { i = (i - 1 + list.length) % list.length; show(); } };
+  lb.onclick = (e) => { if (e.target.closest('[data-x]') || e.target === lb.querySelector('.lb-body')) return close(); if (e.target.closest('[data-n]')) { i = (i + 1) % list.length; show(); } if (e.target.closest('[data-p]')) { i = (i - 1 + list.length) % list.length; show(); } };
+  document.addEventListener('keydown', key); show(); document.body.appendChild(lb);
+}
+
 // ---------- visualização de imagens e vídeos ----------
 function openMedia(p, id) {
   const list = p.showcase.filter((m) => m.kind === 'imagem' || m.kind === 'video');
@@ -133,6 +146,7 @@ function openMedia(p, id) {
   show(); document.body.appendChild(lb);
 }
 
+const longDate = (d) => { const [y, m, dd] = String(d).slice(0, 10).split('-'); return `${Number(dd)} de ${['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'][Number(m) - 1]} de ${y}`; };
 const files = (list) => (list.length ? html`<div class="files">${list.map((f) => html`<div class="file" data-ref="doc-${f.id}"><div class="file-ico">${fileExt(f.file_name)}</div><div class="grow"><a class="li-title" href="${url(f, true)}" target="_blank" rel="noopener">${f.title}</a><div class="li-sub">${[f.category, f.size ? bytes(f.size) : null, date(f.published_at || f.created_at)].filter(Boolean).join(' · ')}</div></div><a class="icon-btn" href="${url(f)}" aria-label="Baixar">${icon('download', 'sm')}</a></div>`)}</div>` : html`<div class="muted small">Nenhum arquivo liberado ainda.</div>`);
 const coverImg = (p) => (p.cover ? html`<img src="${p.cover.url}" alt="${p.name}" style="object-position:${p.cover.x}% ${p.cover.y}%;transform:scale(${p.cover.zoom});--fx:${p.cover.x}%;--fy:${p.cover.y}%">` : '');
 const pending = (p) => p.approvals.filter((a) => a.status === 'aberta');
@@ -191,12 +205,30 @@ const VIEWS = {
       ${d.events.filter((e) => !e.project_id || e.project_id === p.id).length ? html`<div class="pt-card"><h3 class="serif" style="font-size:20px;font-weight:500;margin-bottom:8px">Próximos compromissos</h3><div class="list">${d.events.filter((e) => !e.project_id || e.project_id === p.id).map((e) => html`<div class="list-item"><div class="grow"><div class="li-title">${e.title}</div><div class="li-sub">${date(e.start_at)}${e.all_day ? '' : ' às ' + time(e.start_at)}${e.location ? ' · ' + e.location : ''}</div></div></div>`)}</div></div>` : ''}
       ${(p.minutes || []).length ? html`<div class="pt-card"><h3 class="serif" style="font-size:20px;font-weight:500;margin-bottom:8px">Atas de reunião</h3><div class="timeline">${p.minutes.map((a) => html`<div class="tl" data-ref="ata-${a.id}"><div class="row between wrap"><div class="d">${date(a.date)} · ${a.title || 'Reunião'}</div><a class="btn xs" href="/api/portal/minutes/${a.id}/pdf" target="_blank" rel="noopener">${icon('download', 'sm')} PDF</a></div>
         ${a.next_steps && a.next_steps.length ? html`<div class="small mt-8"><b>Próximos passos:</b><ul style="margin:4px 0 0 18px;padding:0">${a.next_steps.map((n) => html`<li>${n.acao}${n.responsavel ? ' — ' + n.responsavel : ''}${n.prazo ? ' · até ' + date(n.prazo) : ''}</li>`)}</ul></div>` : ''}</div>`)}</div></div>` : ''}</div></div>`,
-  obra: (p) => (p.works.length ? html`<div class="col" style="gap:14px">${p.works.map((w) => html`<div class="pt-card"><div class="row between wrap"><h3 class="serif" style="font-size:24px;font-weight:500">${w.name || 'Obra'}</h3><span class="badge ${w.status === 'concluida' ? 'success' : 'info'}">${{ planejada: 'Planejada', em_andamento: 'Em andamento', pausada: 'Pausada', concluida: 'Concluída' }[w.status] || w.status}</span></div>
-      <div class="row between small mt-16"><span>Execução</span><b>${w.progress}%</b></div><div class="progress mt-8"><span style="width:${w.progress}%"></span></div>
-      <div class="small muted mt-8">${w.start_date ? 'Início ' + date(w.start_date) : ''}${w.due_date ? ' · previsão ' + date(w.due_date) : ''}</div>
-      ${w.phases.length ? html`<div class="grid g3 mt-24">${w.phases.map((ph) => html`<div><div class="row between small"><span>${ph.name}</span><span class="muted">${ph.progress}%</span></div><div class="progress thin mt-8"><span style="width:${ph.progress}%"></span></div></div>`)}</div>` : ''}
-      ${w.updates.length ? html`<div class="eyebrow mt-32 mb-16">Diário da obra</div><div class="timeline">${w.updates.map((u) => html`<div class="tl"><div class="d">${date(u.date)}</div><div class="x notes">${u.description}</div>${u.decisions ? html`<div class="small mt-8"><b>Decisões:</b> ${u.decisions}</div>` : ''}
-        ${u.photos.length ? html`<div class="gallery mt-8">${u.photos.map((f) => html`<a href="${url(f, true)}" target="_blank" rel="noopener"><img src="${url(f, true)}" loading="lazy" alt=""></a>`)}</div>` : ''}</div>`)}</div>` : ''}</div>`)}</div>` : html`<div class="pt-empty">A obra deste projeto ainda não foi iniciada.</div>`),
+  obra: (p, d, st) => {
+    if (!p.works.length) return html`<div class="pt-empty">A obra deste projeto ainda não foi iniciada.</div>`;
+    const W = { planejada: 'Planejada', em_andamento: 'Em andamento', pausada: 'Pausada', concluida: 'Concluída' };
+    const SV = { iniciado: 'Iniciado', em_andamento: 'Em andamento', concluido: 'Concluído', impedido: 'Impedido' };
+    const sub = st.osub || 'diario';
+    return html`<div class="col" style="gap:14px">${p.works.map((w) => html`<div class="pt-card pt-obra">
+      <div class="row between wrap"><h3 class="serif" style="font-size:26px;font-weight:500">${w.name || 'Sua obra'}</h3><span class="badge ${w.status === 'concluida' ? 'success' : 'info'}">${W[w.status] || w.status}</span></div>
+      <div class="row between small mt-8"><span>Execução da obra</span><b>${w.progress}%</b></div><div class="progress mt-8"><span style="width:${w.progress}%"></span></div>
+      <div class="pt-osubs">${[['diario', 'Diário'], ['etapas', 'Etapas'], ['pagamentos', 'Pagamentos']].map(([k, l]) => html`<button data-osub="${k}" class="${k === sub ? 'on' : ''}">${l}</button>`)}</div>
+      ${sub === 'diario' ? (w.updates.length ? html`<div class="pt-tl">${w.updates.map((u) => html`<article class="pt-log" data-ref="log-${u.id}">
+          <div class="pt-log-d">${icon('calendar', 'sm')} ${longDate(u.date)}</div>
+          ${u.title ? html`<h4>${u.title}</h4>` : ''}
+          ${u.photos.length ? html`<div class="pt-log-ph">${u.photos.map((f, i) => html`<button type="button" data-logph="${u.id}" data-i="${i}" title="${f.title || ''}"><img src="${url(f, true)}" loading="lazy" alt="${f.title || ''}"></button>`)}</div>` : ''}
+          ${u.description ? html`<p class="notes">${u.description}</p>` : ''}
+          ${u.services.length ? html`<div class="pt-svcs">${u.services.map((x) => html`<span class="pt-svc ${x.status}">${x.name} · ${SV[x.status] || ''}</span>`)}</div>` : ''}
+          ${u.client_note ? html`<p class="small notes">${u.client_note}</p>` : ''}
+          ${u.decisions ? html`<p class="small"><b>Decisões:</b> ${u.decisions}</p>` : ''}
+          ${u.next.length ? html`<div class="small"><b>Próximos passos</b><ul>${u.next.map((n) => html`<li>${n.text}${n.responsible ? ' — ' + n.responsible : ''}${n.due_date ? ' · até ' + date(n.due_date) : ''}${n.status === 'resolvida' ? ' (resolvido)' : ''}</li>`)}</ul></div>` : ''}
+        </article>`)}</div>` : html`<div class="muted small mt-16">As atualizações da obra publicadas pelo escritório aparecem aqui.</div>`) : ''}
+      ${sub === 'etapas' ? html`${w.phases.length ? html`<div class="grid g3 mt-16">${w.phases.map((ph) => html`<div><div class="row between small"><span>${ph.name}</span><span class="muted">${ph.progress}%</span></div><div class="progress thin mt-8"><span style="width:${ph.progress}%"></span></div>${ph.due_date && ph.progress < 100 ? html`<div class="tiny muted mt-4">previsão ${date(ph.due_date)}</div>` : ''}</div>`)}</div>` : html`<div class="muted small mt-16">As etapas serão publicadas pelo escritório.</div>`}
+        ${w.pendencies && w.pendencies.length ? html`<div class="small mt-16"><b>Próximos passos</b><ul>${w.pendencies.map((n) => html`<li>${n.text}${n.responsible ? ' — ' + n.responsible : ''}${n.due_date ? ' · até ' + date(n.due_date) : ''}</li>`)}</ul></div>` : ''}` : ''}
+      ${sub === 'pagamentos' ? html`<div class="mt-16 row wrap gap-8"><button class="btn" data-go="financeiro" data-sub="orcamentos">${icon('docs', 'sm')} Orçamentos e aprovações</button><button class="btn" data-go="financeiro" data-sub="pagamentos">${icon('card', 'sm')} Pagamentos e comprovantes</button></div>` : ''}
+    </div>`)}</div>`;
+  },
   documentos: (p) => html`<div class="col" style="gap:14px"><div class="pt-card"><h3 class="serif" style="font-size:22px;font-weight:500;margin-bottom:10px">Documentos liberados</h3>${files(p.documents)}</div>
     ${(p.minutes || []).length ? html`<div class="pt-card"><h3 class="serif" style="font-size:22px;font-weight:500;margin-bottom:10px">Atas de reunião</h3><div class="files">${p.minutes.map((a) => html`<div class="file"><div class="file-ico">PDF</div><div class="grow"><a class="li-title" href="/api/portal/minutes/${a.id}/pdf" target="_blank" rel="noopener">${a.title || 'Reunião'}</a><div class="li-sub">${date(a.date)}${a.number ? ' · ' + a.number : ''}</div></div></div>`)}</div></div>` : ''}</div>`,
   financeiro: (p, d, st) => {

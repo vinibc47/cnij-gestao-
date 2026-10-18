@@ -9,6 +9,7 @@ const NAV = [
   ['financeiro', 'financeiro', 'Financeiro', 'wallet'],
   ['projetos', 'projetos', 'Projetos', 'folder'],
   ['obras', 'obras', 'Obras', 'helmet'],
+  ['diario', 'diario', 'Diário de obra', 'diary'],
   ['tarefas', 'tarefas', 'Tarefas', 'tasks'],
   ['clientes', 'clientes', 'Clientes', 'users'],
   ['propostas', 'propostas', 'Propostas', 'proposal'],
@@ -29,9 +30,9 @@ const VIEWS = {
   propostas: () => import('./views/commercial.js'), contratos: () => import('./views/commercial.js'), fornecedores: () => import('./views/suppliers.js'),
   agenda: () => import('./views/agenda.js'), documentos: () => import('./views/documents.js'), relatorios: () => import('./views/reports.js'),
   configuracoes: () => import('./views/settings.js'), notificacoes: () => import('./views/notifications.js'),
-  recibos: () => import('./views/receipts.js'), atas: () => import('./views/minutes.js'), placas: () => import('./views/signs.js'), apresentacoes: () => import('./views/presentations.js'),
+  recibos: () => import('./views/receipts.js'), atas: () => import('./views/minutes.js'), placas: () => import('./views/signs.js'), diario: () => import('./views/diary.js'), apresentacoes: () => import('./views/presentations.js'),
 };
-const MODULE_OF = { '': 'dashboard', notificacoes: 'dashboard' };
+const MODULE_OF = { '': 'dashboard', notificacoes: 'dashboard', diario: 'obras' };
 
 const root = document.getElementById('root');
 let current = null;
@@ -67,7 +68,7 @@ window.addEventListener('auth:expired', () => { if (S.user) { S.user = null; toa
 
 // ------------------------------ Layout ------------------------------
 function renderShell() {
-  const nav = NAV.filter(([m]) => can(m));
+  const nav = NAV.filter(([m]) => can(MODULE_OF[m] || m));
   const u = S.user;
   root.innerHTML = toHTML(html`<div class="app">
     <aside class="sidebar">
@@ -143,7 +144,7 @@ export function quickMenu(anchor) {
   if (R.expenses) items.push({ label: 'Nova despesa', icon: 'out', fn: async () => (await import('./views/finance.js')).newEntry('expenses', {}, rerender) });
   if (R.events) items.push({ label: 'Nova reunião', icon: 'calendar', fn: () => openForm('events', { values: { type: 'reuniao' }, onSaved: rerender }) });
   if (R.proposals) items.push({ label: 'Nova proposta (orçamento de obra)', icon: 'proposal', fn: () => go('#/propostas?nova=1') });
-  if (R.work_logs) items.push({ label: 'Registro no diário de obra', icon: 'diary', fn: () => openForm('work_logs', { onSaved: rerender }) });
+  if (R.work_logs) items.push({ label: 'Atualizar obra (diário)', icon: 'diary', fn: () => { location.hash = '#/diario/novo'; } });
   if (R.time_entries) items.push({ label: 'Lançar horas', icon: 'clock', fn: () => openForm('time_entries', { onSaved: rerender }) });
   menu(anchor, [{ header: 'Ações rápidas' }, ...items]);
 }

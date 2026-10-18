@@ -48,7 +48,7 @@ async function detail(ctx, id) {
   root.innerHTML = toHTML(html`
     <div class="hero"><div class="crumbs"><a href="#/obras">Obras</a> ${icon('chevron', 'sm')} <a href="#/projetos/${w.project_id}">${w.project_name}</a></div>
       <div class="row between top wrap gap-16"><div><h1>${w.name}</h1><div class="info-row mt-8"><span>${icon('users', 'sm')}${w.client_name || '—'}</span>${w.address ? html`<span>${icon('pin', 'sm')}${w.address}</span>` : ''}<span>${icon('users', 'sm')}Resp.: ${w.responsible_name || '—'}</span>${badge('WORK_STATUS', w.status)}</div></div>
-        <div class="row wrap"><button class="btn" data-edit>${icon('edit')} Editar</button><button class="btn primary" data-log>${icon('diary')} Registrar no diário</button><button class="icon-btn" data-more>${icon('more')}</button></div></div>
+        <div class="row wrap"><button class="btn" data-edit>${icon('edit')} Editar</button><button class="btn primary" data-log>${icon('diary')} Atualizar obra</button><button class="icon-btn" data-more>${icon('more')}</button></div></div>
       <div class="stat-strip mt-24">
         <div><div class="l">Executado</div><div class="v">${w.progress}%</div><div class="progress thin mt-8"><span style="width:${w.progress}%"></span></div></div>
         <div><div class="l">Orçamento previsto</div><div class="v">${money(w.budget)}</div></div>
@@ -61,7 +61,7 @@ async function detail(ctx, id) {
   const show = (k) => { active = k; $$('[data-tab]', root).forEach((b) => b.classList.toggle('on', b.dataset.tab === k)); body.innerHTML = ''; (T[k] || T.fases)(body, d, { reload, fin, ctx }); history.replaceState(null, '', `#/obras/${id}${k !== 'fases' ? '?tab=' + k : ''}`); };
   root.querySelector('.tabs').onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) show(b.dataset.tab); };
   root.querySelector('[data-edit]').onclick = () => openForm('works', { id, onSaved: reload });
-  root.querySelector('[data-log]').onclick = () => newLog(w, reload);
+  root.querySelector('[data-log]').onclick = () => ctx.go(`#/diario/novo?obra=${w.id}`);
   root.querySelector('[data-more]').onclick = (e) => menu(e.currentTarget, [
     { label: 'Nova visita técnica (agenda)', icon: 'calendar', fn: () => openForm('events', { values: { type: 'visita_tecnica', work_id: w.id, project_id: w.project_id, client_id: w.client_id, location: w.address }, onSaved: reload }) },
     { label: 'Informações gerais da obra', icon: 'docs', fn: () => ctx.go(`#/projetos/${w.project_id}?tab=infoobra`) },
@@ -75,21 +75,11 @@ async function detail(ctx, id) {
   show(tabs.find((t) => t[0] === active) ? active : 'fases');
 }
 
-function newLog(w, reload) {
-  openForm('work_logs', { values: { work_id: w.id }, exclude: ['work_id'], title: 'Novo registro no diário', onSaved: (log) => {
-    reload();
-    const box = el('<div></div>');
-    box.appendChild(dropzone({ entity: 'work_logs', entity_id: log.id, work_id: w.id, project_id: w.project_id, category: 'Fotos de obra' }, () => { reload(); }, { label: 'Adicionar fotos a este registro', accept: 'image/*' }));
-    const dd = drawer({ title: 'Fotos do registro', sub: 'Diário de obra', body: box });
-    dd.foot.classList.remove('hidden'); dd.foot.innerHTML = '<button class="btn primary">Concluir</button>'; dd.foot.querySelector('button').onclick = dd.close;
-  } });
-}
-
 const T = {
   fases(body, d, { reload }) {
-    const box = el(html`<div><div class="row between wrap mb-16"><div class="muted small">Atualize o percentual de cada fase — o percentual executado da obra é calculado automaticamente. Clique na fase para informar responsável, pendências e próxima ação.</div><div class="row gap-8"><button class="btn sm" data-pdf>${icon('print', 'sm')} Gerar PDF das etapas</button><button class="btn sm primary" data-add>${icon('plus')} Nova fase</button></div></div>
+    const box = el(html`<div><div class="row between wrap mb-16"><div class="muted small">Atualize o percentual de cada fase — o percentual executado da obra é calculado automaticamente. Clique na fase para informar responsável, pendências e próxima ação.</div><div class="row gap-8"><button class="btn sm" data-pdf>${icon('print', 'sm')} Gerar PDF das etapas</button><button class="btn sm" data-edph>${icon('list', 'sm')} Editar etapas</button><button class="btn sm primary" data-add>${icon('plus')} Nova fase</button></div></div>
       <div class="card phase-list">${d.phases.length ? d.phases.map((p, i) => html`<div class="ph ${p.progress >= 100 ? 'done' : p.progress > 0 ? 'doing' : ''}" style="grid-template-columns:28px 1fr minmax(160px,260px)"><div class="ph-num">${p.progress >= 100 ? '✓' : i + 1}</div>
-        <div style="min-width:0"><div class="cell-title" data-open="${p.id}" style="cursor:pointer">${p.name}</div><div class="cell-sub">${[p.responsible || p.supplier_name, p.due_date ? 'até ' + date(p.due_date) : null, label('PHASE_STATUS', p.status)].filter(Boolean).join(' · ')}</div>${p.pending || p.next_action ? html`<div class="cell-sub warning-text">${p.pending ? 'Pendência: ' + p.pending : ''}${p.pending && p.next_action ? ' · ' : ''}${p.next_action ? 'Próxima ação: ' + p.next_action : ''}</div>` : ''}</div>
+        <div style="min-width:0"><div class="cell-title" data-open="${p.id}" style="cursor:pointer">${p.name}</div><div class="cell-sub">${[p.applicable === 0 ? 'não se aplica (fora do progresso)' : null, p.responsible || p.supplier_name, p.due_date ? 'até ' + date(p.due_date) : null, label('PHASE_STATUS', p.status)].filter(Boolean).join(' · ')}</div>${p.pending || p.next_action ? html`<div class="cell-sub warning-text">${p.pending ? 'Pendência: ' + p.pending : ''}${p.pending && p.next_action ? ' · ' : ''}${p.next_action ? 'Próxima ação: ' + p.next_action : ''}</div>` : ''}</div>
         <div class="row gap-8"><input type="range" min="0" max="100" step="5" value="${p.progress}" data-pg="${p.id}"><span class="small muted" style="width:38px;text-align:right" data-pv="${p.id}">${p.progress}%</span></div></div>`) : html`<div class="empty">Nenhuma fase cadastrada.</div>`}</div></div>`);
     body.appendChild(box);
     box.addEventListener('input', (e) => { const r = e.target.closest('[data-pg]'); if (r) box.querySelector(`[data-pv="${r.dataset.pg}"]`).textContent = r.value + '%'; });
@@ -97,6 +87,7 @@ const T = {
     box.onclick = (e) => { const o = e.target.closest('[data-open]'); if (o) openForm('work_phases', { id: +o.dataset.open, exclude: ['work_id'], onSaved: reload }); };
     box.querySelector('[data-add]').onclick = () => openForm('work_phases', { values: { work_id: d.work.id }, exclude: ['work_id', 'position'], onSaved: reload });
     box.querySelector('[data-pdf]').onclick = async () => (await import('../lib.js')).openPdf(`/pdf/work-phases/${d.work.id}`);
+    box.querySelector('[data-edph]').onclick = async () => { const { phasesEditor } = await import('./diary.js'); const c = await api.get(`/diary/context/${d.work.id}`); phasesEditor(c, reload); };
   },
   async execucao(body, d, { reload }) {
     const { rowsEditor, dirtyTracker, openPdf, round2 } = await import('../lib.js');
@@ -128,10 +119,10 @@ const T = {
     box.querySelector('[data-save]').onclick = () => save();
     box.querySelector('[data-pdf]').onclick = () => openPdf(`/pdf/work-budget/${d.work.id}`, { dirty: tracker.dirty, save: () => save(true) });
   },
-  diario(body, d, { reload }) {
-    const box = el(html`<div><div class="row between mb-16"><div class="muted small">Registros de visitas, decisões, problemas, pendências e fornecedores presentes.</div><button class="btn sm primary" data-add>${icon('plus')} Novo registro</button></div>
-      ${d.logs.length ? html`<div class="timeline">${d.logs.map((l) => html`<div class="tl"><div class="row between wrap"><div class="d">${date(l.date)} · ${l.user_name || ''} ${badge('WORK_LOG_KIND', l.kind)} ${l.client_visible ? html`<span class="badge info plain">visível ao cliente</span>` : ''}</div><button class="icon-btn" data-lm="${l.id}">${icon('more', 'sm')}</button></div>
-        <div class="card mt-8"><div class="notes">${l.description}</div>
+  diario(body, d, { reload, ctx }) {
+    const box = el(html`<div><div class="row between wrap mb-16 gap-8"><div class="muted small">Visitas, serviços, fotos e próximos passos. O mesmo registro aparece no menu “Diário de obra” e, se publicado, na Área do Cliente.</div><div class="row gap-8"><a class="btn sm" href="#/diario?obra=${d.work.id}">${icon('list', 'sm')} Ver no Diário de obra</a><button class="btn sm primary" data-add>${icon('plus')} Atualizar obra</button></div></div>
+      ${d.logs.length ? html`<div class="timeline">${d.logs.map((l) => html`<div class="tl"><div class="row between wrap"><div class="d">${date(l.date)} · ${l.user_name || ''} ${badge('WORK_LOG_KIND', l.kind)} ${l.client_visible ? html`<span class="badge success">Publicado para o cliente</span>` : html`<span class="badge muted">Rascunho · interno</span>`}</div><button class="icon-btn" data-lm="${l.id}">${icon('more', 'sm')}</button></div>
+        <div class="card mt-8">${l.title ? html`<div class="cell-title mb-8">${l.title}</div>` : ''}<div class="notes">${l.description}</div>
         ${l.decisions ? html`<div class="mt-16"><div class="eyebrow">Decisões</div><div class="notes">${l.decisions}</div></div>` : ''}
         ${l.problems ? html`<div class="mt-16"><div class="eyebrow danger-text">Problemas encontrados</div><div class="notes">${l.problems}</div></div>` : ''}
         ${l.pending ? html`<div class="mt-16"><div class="eyebrow warning-text">Pendências</div><div class="notes">${l.pending}</div></div>` : ''}
@@ -140,10 +131,10 @@ const T = {
         <div class="mt-16" data-ph="${l.id}"></div></div></div>`)}</div>` : html`<div class="empty">${icon('diary')}<div>Nenhum registro no diário.</div></div>`}</div>`);
     body.appendChild(box);
     d.logs.forEach((l) => { const z = box.querySelector(`[data-ph="${l.id}"]`); if (z) { const dz = dropzone({ entity: 'work_logs', entity_id: l.id, work_id: d.work.id, project_id: d.work.project_id, category: 'Fotos de obra' }, reload, { label: 'Adicionar fotos', accept: 'image/*', compact: true }); z.appendChild(dz); } });
-    box.querySelector('[data-add]').onclick = () => newLog(d.work, reload);
+    box.querySelector('[data-add]').onclick = () => (location.hash = `#/diario/novo?obra=${d.work.id}`);
     box.onclick = (e) => { const b = e.target.closest('[data-lm]'); if (!b) return; const l = d.logs.find((x) => x.id == b.dataset.lm);
-      menu(b, [{ label: 'Editar', icon: 'edit', fn: () => openForm('work_logs', { id: l.id, exclude: ['work_id'], onSaved: reload }) },
-        { label: l.client_visible ? 'Ocultar do cliente' : 'Mostrar ao cliente', icon: 'eye', fn: async () => { await api.put(`/r/work_logs/${l.id}`, { client_visible: l.client_visible ? 0 : 1 }); reload(); } },
+      menu(b, [{ label: 'Abrir / editar', icon: 'edit', fn: () => (location.hash = `#/diario/${l.id}`) },
+        { label: l.client_visible ? 'Retirar da área do cliente' : 'Publicar para o cliente', icon: 'eye', fn: async () => { await api.post(`/diary/logs/${l.id}/${l.client_visible ? 'unpublish' : 'publish'}`); reload(); } },
         { label: 'Excluir', icon: 'trash', danger: true, fn: async () => { if (await deleteRow('work_logs', l)) reload(); } }]); };
   },
   orcamentos(body, d, { reload }) { body.appendChild(quotesPanel(d.quotes, { projectId: d.work.project_id, workId: d.work.id, onChange: reload })); },
