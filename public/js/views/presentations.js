@@ -70,9 +70,15 @@ async function editor(ctx, root, projectId, presId) {
     root.querySelector('[data-proj]').appendChild(pc);
     $$('[data-new]', root).forEach((b) => (b.onclick = newPres));
   }
+  // nova apresentação: escolha da estrutura em dois botões (padrão: capa + imagens)
   async function newPres() {
     await flush();
-    try { const r = await api.post('/presentations', { project_id: projectId }); toast(`${r.title} criada.`); go(r.id); } catch (e) { fail(e); }
+    const create = async (structure) => { try { const r = await api.post('/presentations', { project_id: projectId, structure }); toast(`${r.title} criada.`); go(r.id); } catch (e) { fail(e); } };
+    const m = modal({ title: `Nova apresentação (${pad(meta.next_number)})`, body: html`<p class="small muted" style="margin-top:0">Escolha como ela começa. Dá para incluir ou tirar a planta de layout depois.</p>
+      <div class="apr-struct"><button type="button" class="on" data-s="sem_layout"><b>Capa + imagens do projeto</b><span>01 Capa · 02 em diante: imagens</span></button>
+        <button type="button" data-s="com_layout"><b>Capa + planta de layout + imagens</b><span>01 Capa · 02 Planta · 03 em diante: imagens</span></button></div>`,
+    actions: [{ label: 'Cancelar' }] });
+    $$('[data-s]', m.el).forEach((b) => (b.onclick = () => { m.close(); create(b.dataset.s); }));
   }
 
   // ---------------- layout principal
@@ -80,7 +86,7 @@ async function editor(ctx, root, projectId, presId) {
     <div class="apr-status" data-pub></div>
     <div class="apr-grid">
       <aside class="apr-pages card"><div class="apr-side-h"><b>Páginas</b><span class="small muted" data-count></span></div><div class="apr-thumbs" data-thumbs></div>
-        <button class="btn apr-addpage" data-addpage>${icon('plus', 'sm')} Adicionar páginas</button></aside>
+        <button class="btn apr-addpage" data-addpage>${icon('plus', 'sm')} Adicionar página</button></aside>
       <section class="apr-center">
         <div class="apr-tools">${TOOLS.map(([k, l, ic]) => html`<button data-tool="${k}" class="${k === 'select' ? 'on' : ''}" title="${l}">${ti(ic)}<span>${l}</span></button>`)}
           <span class="sep"></span><button data-undo title="Desfazer (Ctrl+Z)">${ti('undo')}<span>Desfazer</span></button><button data-redo title="Refazer (Ctrl+Y)">${ti('redo')}<span>Refazer</span></button></div>
@@ -104,7 +110,7 @@ async function editor(ctx, root, projectId, presId) {
   const D = () => ({ ...st.data, number: st.pres.number });
   const slides = () => st.data.slides;
   const curSlide = () => slides()[st.slide];
-  const slideLabel = (s, i) => (s.kind === 'capa' ? 'Capa' : s.kind === 'planta' ? (s.room || 'Planta de layout') : s.room || `Página ${pad(i + 1)}`);
+  const slideLabel = (s, i) => (s.kind === 'capa' ? 'Capa' : s.kind === 'planta' ? (s.room || 'Planta de layout') : s.room || 'Imagem do projeto');
 
   // ---------------- alterações (desfazer / refazer / salvar automático)
   function change(fn, { snapshot = true, render = 'all' } = {}) {
@@ -178,6 +184,15 @@ async function editor(ctx, root, projectId, presId) {
         ${s.kind !== 'capa' ? html`<span class="mv"><button data-up="${i}" title="Mover para cima" ${i <= 1 ? 'disabled' : ''}>${ti('up')}</button><button data-down="${i}" title="Mover para baixo" ${i >= slides().length - 1 ? 'disabled' : ''}>${ti('down')}</button><button data-pm="${i}" title="Mais">${icon('more', 'sm')}</button></span>` : ''}</div></div>`)}`);
     $$('.apr-thumb-img svg', box).forEach((svg) => { svg.removeAttribute('width'); svg.removeAttribute('height'); svg.style.width = '100%'; svg.style.height = 'auto'; });
   }
+  // remover página: pede confirmação se houver imagem, medidas ou observações; o arquivo original continua no projeto
+  async function removePage(i) {
+    const sl = slides()[i]; if (!sl || sl.kind === 'capa') return;
+    const has = (sl.images || []).some((x) => x && x.doc_id) || (sl.annotations || []).length || sl.text;
+    if (has && !(await confirmDialog(`Remover a página ${pad(i + 1)} (${slideLabel(sl, i)})? ${(sl.annotations || []).length ? `As ${sl.annotations.length} marcação(ões) desta página saem junto. ` : ''}As imagens continuam guardadas nos arquivos do projeto.`, { title: 'Remover página', ok: 'Remover', danger: true }))) return false;
+    change((d) => d.slides.splice(i, 1)); st.slide = Math.min(i, slides().length - 1); st.ann = null; paint();
+    toast(`Página removida. A apresentação agora tem ${slides().length} página(s).`);
+    return true;
+  }
   function move(from, to) { if (to < 1 || to >= slides().length || from < 1) return; change((d) => { const [x] = d.slides.splice(from, 1); d.slides.splice(to, 0, x); }); st.slide = to; paint(); }
   $('[data-thumbs]').addEventListener('click', (e) => {
     const up = e.target.closest('[data-up]'); const dn = e.target.closest('[data-down]'); const pm = e.target.closest('[data-pm]');
@@ -185,7 +200,7 @@ async function editor(ctx, root, projectId, presId) {
     if (dn) return move(+dn.dataset.down, +dn.dataset.down + 1);
     if (pm) { const i = +pm.dataset.pm; return menu(pm, [
       { label: 'Duplicar página', icon: 'copy', fn: () => { change((d) => d.slides.splice(i + 1, 0, { ...clone(d.slides[i]), id: rid() })); st.slide = i + 1; paint(); } },
-      slides()[i].kind !== 'planta' ? { label: 'Excluir página', icon: 'trash', danger: true, fn: async () => { if (!(await confirmDialog('Excluir esta página da apresentação? (As imagens continuam nos arquivos do projeto.)', { ok: 'Excluir', danger: true }))) return; change((d) => d.slides.splice(i, 1)); st.slide = Math.max(0, i - 1); st.ann = null; paint(); } } : null]); }
+      { label: 'Remover página', icon: 'trash', danger: true, fn: () => removePage(i) }]); }
     const t = e.target.closest('[data-i]'); if (t) { st.slide = +t.dataset.i; st.ann = null; paint(); }
   });
   // arrastar páginas para reordenar
@@ -381,7 +396,17 @@ async function editor(ctx, root, projectId, presId) {
     } }] });
     m.el.classList.add('wide'); m.el.style.width = 'min(860px, calc(100vw - 24px))';
   }
-  $('[data-addpage]').onclick = () => pickImages({ bulk: true, title: 'Adicionar páginas', onPick: (ids, { room, perPage }) => {
+  // adicionar: planta de layout (sugerida logo após a capa) ou imagens do projeto
+  $('[data-addpage]').onclick = (e) => menu(e.currentTarget, [
+    { label: 'Planta de layout', icon: 'grid', fn: addPlanta },
+    { label: 'Imagens do projeto', icon: 'image', fn: addImages }]);
+  function addPlanta() {
+    const lastPlanta = slides().map((x) => x.kind).lastIndexOf('planta');
+    const pos = lastPlanta >= 0 ? lastPlanta + 1 : 1; // logo após a capa (ou após a última planta)
+    change((d) => d.slides.splice(pos, 0, SC.plantaSlide())); st.slide = pos; st.ann = null; paint();
+    pickImages({ single: true, title: 'Planta de layout', onPick: ([id]) => change((d) => { d.slides[pos].images = [{ doc_id: id }]; }) });
+  }
+  const addImages = () => pickImages({ bulk: true, title: 'Imagens do projeto', onPick: (ids, { room, perPage }) => {
     change((d) => {
       // se a planta ainda estiver vazia, a primeira imagem escolhida não é colocada nela automaticamente (pode não ser a planta)
       if (perPage) ids.forEach((id) => d.slides.push({ id: rid(), kind: 'ambiente', room, layout: '1', images: [{ doc_id: id }] }));
@@ -459,8 +484,21 @@ async function editor(ctx, root, projectId, presId) {
   $$('[data-format] button', root).forEach((b) => (b.onclick = () => { if (st.data.format === b.dataset.v) return; change((d) => { d.format = b.dataset.v; }); toast(`Formato ${SC.FORMATS[b.dataset.v].label}: os elementos foram reorganizados sem esticar as imagens.`); }));
   $('[data-save]').onclick = async () => { await save(true); if (!st.error) toast('Apresentação salva.'); };
   $('[data-view]').onclick = () => slideshow();
+  // páginas adicionadas sem imagem: avisar e oferecer "Adicionar imagem" ou "Remover página" antes de exportar/publicar
+  function checkEmpty(action) {
+    const empty = SC.emptyPages(D());
+    if (!empty.length) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const m = modal({ title: 'Páginas sem imagem', body: html`<p class="small muted" style="margin-top:0">Estas páginas ainda não têm imagem. No ${action === 'pdf' ? 'PDF' : 'portal'} elas sairiam com a área da imagem em branco.</p>
+        <div class="list apr-empty">${empty.map((x) => html`<div class="list-item"><div class="grow"><div class="li-title">Página ${pad(x.index + 1)} — ${x.label}</div></div><button class="btn xs" data-add="${x.index}">Adicionar imagem</button><button class="btn xs ghost" data-rm="${x.index}">Remover página</button></div>`)}</div>`,
+      actions: [{ label: 'Voltar', fn: () => resolve(false) }, { label: action === 'pdf' ? 'Exportar assim mesmo' : 'Publicar assim mesmo', fn: () => resolve(true) }], onClose: () => resolve(false) });
+      $$('[data-add]', m.el).forEach((b) => (b.onclick = () => { m.close(); st.slide = +b.dataset.add; st.ann = null; paint(); const sl = curSlide(); pickImages({ single: true, title: sl.kind === 'planta' ? 'Planta de layout' : 'Imagem da página', onPick: ([id]) => change((d) => { d.slides[st.slide].images = [{ doc_id: id }, ...((d.slides[st.slide].images || []).slice(1))]; }) }); }));
+      $$('[data-rm]', m.el).forEach((b) => (b.onclick = async () => { m.close(); await removePage(+b.dataset.rm); }));
+    });
+  }
   $('[data-pdf]').onclick = async (e) => {
     const b = e.currentTarget; await flush(); if (st.error) return toast('Salve as alterações antes de exportar.', { error: true });
+    if (!(await checkEmpty('pdf'))) return; await flush();
     b.disabled = true; const old = b.innerHTML; b.innerHTML = 'Gerando PDF…';
     try {
       const r = await fetch(`/api/presentations/${st.pres.id}/pdf`, { headers: { 'X-Requested-With': 'cnij' }, credentials: 'same-origin' });
@@ -473,7 +511,8 @@ async function editor(ctx, root, projectId, presId) {
   };
   const pb = $('[data-publish]'); if (pb) pb.onclick = async () => {
     await flush(); if (st.error) return toast('Salve as alterações antes de publicar.', { error: true });
-    const w = warnings();
+    if (!(await checkEmpty('portal'))) return; await flush();
+    const w = warnings().filter((x) => !/sem imagem/.test(x));
     if (!(await confirmDialog(`${w.length ? `Pendências: ${w.slice(0, 4).join('; ')}. ` : ''}Publicar a ${st.pres.title} no portal do cliente? Ela aparece em “Veja seu projeto” com PDF para visualizar e baixar.${st.pres.status === 'publicada' ? ' A versão anterior fica guardada no histórico.' : ''}`, { title: 'Publicar no portal', ok: 'Publicar' }))) return;
     pb.disabled = true; pb.textContent = 'Publicando…';
     try { const r = await api.post(`/presentations/${st.pres.id}/publish`); Object.assign(st.pres, { status: r.status, published_version: r.published_version, has_unpublished: false, published_doc_id: r.published_doc_id }); toast(`Publicada no portal (versão ${r.version}).`); const i = list.find((x) => x.id === st.pres.id); if (i) i.status = 'publicada'; }

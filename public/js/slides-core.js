@@ -57,6 +57,7 @@
   }
   let clipN = 0;
   function drawImage(box, img, o, id) {
+    if (!img && !(o && o.preview)) return { svg: '', rect: null }; // no PDF: área em branco, sem textos de pendência
     if (!img) return { svg: rect(box.x, box.y, box.w, box.h, C.empty) + text(box.x + box.w / 2, box.y + box.h / 2 + 4, o && o.placeholder ? o.placeholder : 'Adicionar imagem', { size: 13, fill: C.emptyInk, anchor: 'middle' }), rect: null };
     const r = placeImage(box, img, o);
     const cid = `c${id || ++clipN}`;
@@ -136,7 +137,7 @@
       const im = (slide.images || [])[i];
       const img = im && A.images[im.doc_id];
       const def = slide.layout === '2' ? 'cover' : 'contain';
-      const r = drawImage(b, img, { fit: (im && im.fit) || def, fx: im && im.fx, fy: im && im.fy, zoom: im && im.zoom, placeholder: slide.kind === 'planta' ? 'Planta de layout pendente' : 'Adicionar imagem' }, `s${opts.idx || 0}i${i}`);
+      const r = drawImage(b, img, { fit: (im && im.fit) || def, fx: im && im.fx, fy: im && im.fy, zoom: im && im.zoom, placeholder: slide.kind === 'planta' ? 'Planta de layout — adicionar imagem' : 'Adicionar imagem', preview: !!opts.preview }, `s${opts.idx || 0}i${i}`);
       s += r.svg; placed.push({ box: b, rect: r.vis || null, ppi: r.ppi || null, doc_id: im && im.doc_id });
     });
     s += annotations(slide.notes_layer || slide.annotations || [], placed, opts);
@@ -206,15 +207,20 @@
     return opts.withLayout ? { svg, placed, W, H } : svg;
   }
   // sequência padrão: capa, planta e ambientes
-  function defaultSlides() { return [{ id: 'capa', kind: 'capa' }, { id: 'planta', kind: 'planta', room: 'Planta de layout', layout: '1', images: [] }]; }
+  // estrutura inicial escolhida em cada apresentação: com ou sem planta de layout
+  const plantaSlide = () => ({ id: 'planta-' + Math.random().toString(36).slice(2, 8), kind: 'planta', room: 'Planta de layout', layout: '1', images: [] });
+  function defaultSlides(withPlanta = false) { return withPlanta ? [{ id: 'capa', kind: 'capa' }, plantaSlide()] : [{ id: 'capa', kind: 'capa' }]; }
+  // páginas que precisam de atenção (nenhuma regra exige planta: ela é opcional)
+  function emptyPages(p) {
+    return (p.slides || []).map((s, i) => ({ s, i })).filter(({ s }) => s.kind !== 'capa' && !(s.images || []).slice(0, s.layout === '2' ? 2 : 1).some((x) => x && x.doc_id))
+      .map(({ s, i }) => ({ index: i, label: s.kind === 'planta' ? 'Planta de layout' : s.room || 'Imagem do projeto' }));
+  }
   function pendencies(p) {
-    const out = [];
-    const sl = p.slides || [];
-    if (!sl.some((s) => s.kind === 'planta' && (s.images || []).some((i) => i && i.doc_id))) out.push('Planta de layout ainda não adicionada');
-    sl.forEach((s, i) => { if (s.kind !== 'capa' && s.kind !== 'planta' && !(s.images || []).some((x) => x && x.doc_id)) out.push(`Página ${num2(i + 1)} sem imagem`); if (s.kind === 'ambiente' && !s.room) out.push(`Página ${num2(i + 1)} sem nome de ambiente`); });
+    const out = emptyPages(p).map((x) => `Página ${num2(x.index + 1)} (${x.label}) sem imagem`);
+    (p.slides || []).forEach((s, i) => { if (s.kind === 'ambiente' && !s.room && (s.images || []).some((x) => x && x.doc_id)) out.push(`Página ${num2(i + 1)} sem nome de ambiente`); });
     return out;
   }
 
-  const api = { FORMATS, slideSvg, defaultSlides, pendencies, boxes, placeImage, num2, wrap };
+  const api = { FORMATS, slideSvg, defaultSlides, plantaSlide, emptyPages, pendencies, boxes, placeImage, num2, wrap };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.SlidesCore = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
