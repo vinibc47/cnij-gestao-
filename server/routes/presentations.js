@@ -31,8 +31,8 @@ router.get('/presentations/meta/:projectId', wrap((req, res) => {
 }));
 router.post('/presentations', wrap((req, res) => {
   const p = proj(req, (req.body || {}).project_id);
-  const r = PR.create(req.user, p.id);
-  audit(req, 'create', 'presentations', r.id, `${r.title} criada — ${p.name}`);
+  const r = PR.create(req.user, p.id, { structure: (req.body || {}).structure === 'com_layout' ? 'com_layout' : 'sem_layout' });
+  audit(req, 'create', 'presentations', r.id, `${r.title} criada — ${p.name} (${(req.body || {}).structure === 'com_layout' ? 'capa + planta + imagens' : 'capa + imagens'})`);
   res.status(201).json(r);
 }));
 router.get('/presentations/:id', wrap((req, res) => {

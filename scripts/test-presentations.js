@@ -13,6 +13,7 @@ const client = require('./client');
 let pass = 0; let failN = 0;
 const ok = (c, m) => { if (c) { pass++; origLog('  ✓', m); } else { failN++; origLog('  ✗', m); } };
 const rejects = async (p, st, m) => { try { await p; ok(false, m + ' (deveria falhar)'); } catch (e) { ok(!st || e.status === st, `${m} → ${e.status}`); } };
+const clone = (o) => JSON.parse(JSON.stringify(o));
 const has = (cmd) => { try { execFileSync('which', [cmd]); return true; } catch { return false; } };
 
 // imagem PNG de teste com tamanho conhecido
@@ -43,10 +44,11 @@ function png(w, h, rgb = [180, 150, 120]) {
   const tiny = await up('pequena.png', png(300, 200));
 
   origLog('\nApresentações 01 e 02 no mesmo projeto');
-  const a1 = await A.post('/presentations', { project_id: p1.id });
+  const a1 = await A.post('/presentations', { project_id: p1.id, structure: 'com_layout' });
   const a2 = await A.post('/presentations', { project_id: p1.id });
   ok(a1.number === 1 && a2.number === 2 && a1.title === 'Apresentação 01' && a2.title === 'Apresentação 02', 'numeração sugerida: 01 e 02');
-  ok(a1.data.slides[0].kind === 'capa' && a1.data.slides[1].kind === 'planta', 'sequência padrão: capa e planta de layout');
+  ok(a1.data.slides.length === 2 && a1.data.slides[0].kind === 'capa' && a1.data.slides[1].kind === 'planta', 'com layout: 01 capa, 02 planta de layout');
+  ok(a2.data.slides.length === 1 && a2.data.slides[0].kind === 'capa', 'padrão sem layout: só a capa (imagens a partir da página 02)');
   ok(a1.data.code === 'AP_2026_006' && a1.data.cover.subtitle === 'Escritório Canton Matos' && a1.data.cover.image.doc_id === 'padrao', 'cliente/código/nome vêm do projeto; capa com a foto dos arquitetos');
   let full = await A.get(`/presentations/${a1.id}`);
   ok(full.assets.padrao && full.assets.padrao.w > 0, 'dimensões da foto da capa disponíveis para a prévia');
@@ -142,10 +144,46 @@ function png(w, h, rgb = [180, 150, 120]) {
   ok(a4.number === 4, 'nova apresentação não reaproveita número arquivado (sem duplicidade confusa)');
   const other = await up('alheia.png', png(800, 600), 'image/png', p2.id);
   ok(!(await A.get(`/presentations/meta/${p1.id}`)).images.some((i) => i.id === other), 'seleção de imagens mostra só as do projeto');
-  const low = await A.get(`/presentations/${a4.id}`); low.data.slides[1].images = [{ doc_id: tiny }];
+  const low = await A.get(`/presentations/${a4.id}`); low.data.slides.push({ kind: 'ambiente', layout: '1', images: [{ doc_id: tiny }] });
   const L = SC.slideSvg(low.data, 1, { images: { [tiny]: { href: 'x', w: 300, h: 200 } } }, { withLayout: true });
   ok(L.placed[0].ppi < 110, `imagem pequena detectada como pouca resolução (${L.placed[0].ppi} ppi)`);
-  ok(SC.pendencies(a4.data).some((x) => /Planta/.test(x)), 'planta pendente indicada no editor');
+  ok(!SC.pendencies(a4.data).length, 'sem layout não há pendência de planta');
+
+  origLog('\nPlanta de layout opcional');
+  const sem = await A.post('/presentations', { project_id: p1.id });
+  const ds = sem.data; ds.slides.push({ kind: 'ambiente', room: 'Recepção', layout: '1', images: [{ doc_id: recId }] }, { kind: 'ambiente', room: 'Sala', layout: '1', images: [{ doc_id: reuId }] });
+  let sv = await A.put(`/presentations/${sem.id}`, { rev: sem.rev, data: ds });
+  sv = await A.get(`/presentations/${sem.id}`);
+  ok(sv.data.slides.map((x) => x.kind).join(',') === 'capa,ambiente,ambiente', 'sem layout: 01 capa, 02 e 03 imagens — nada é recriado ao salvar e reabrir');
+  const semPdf = path.join(tmp, 'sem.pdf'); fs.writeFileSync(semPdf, Buffer.from(await (await A.file(`/presentations/${sem.id}/pdf`)).arrayBuffer()));
+  if (has('pdfinfo')) { ok(/Pages:\s+3/.test(execFileSync('pdfinfo', [semPdf]).toString()), 'PDF sem layout com 3 páginas (sem página vazia)'); if (has('pdftotext')) ok(!/PLANTA|pendente/i.test(execFileSync('pdftotext', [semPdf, '-']).toString()), 'PDF não mostra “Planta de layout” nem “pendente”'); }
+  // adicionar a planta depois (logo após a capa) e reordenar
+  const d3 = sv.data; d3.slides.splice(1, 0, { kind: 'planta', room: 'Planta de layout', layout: '1', images: [{ doc_id: plantaId }] });
+  sv = await A.put(`/presentations/${sem.id}`, { rev: sv.rev, data: d3 });
+  ok(sv.data.slides.map((x) => x.kind).join(',') === 'capa,planta,ambiente,ambiente', 'planta adicionada depois, na página 02');
+  // capa sempre em primeiro, mesmo se a ordem enviada vier diferente
+  const bad = clone(sv.data); bad.slides.push(bad.slides.shift());
+  sv = await A.put(`/presentations/${sem.id}`, { rev: sv.rev, data: bad });
+  ok(sv.data.slides[0].kind === 'capa', 'a capa continua sempre como primeira página');
+  // remover o layout de uma apresentação existente (a 01 tem planta com medidas)
+  const ex = await A.get(`/presentations/${a1.id}`); const before = clone(ex.data.slides.filter((x) => x.kind !== 'planta'));
+  const edl = clone(ex.data); edl.slides = edl.slides.filter((x) => x.kind !== 'planta');
+  const r1 = await A.put(`/presentations/${a1.id}`, { rev: ex.rev, data: edl });
+  ok(!r1.data.slides.some((x) => x.kind === 'planta') && JSON.stringify(r1.data.slides) === JSON.stringify(before) && r1.number === 1, 'layout removido: demais páginas, imagens e marcações preservadas; continua Apresentação 01');
+  ok(get('SELECT 1 FROM documents WHERE id = ? AND archived = 0', plantaId), 'remover a página não apaga o arquivo da planta do projeto');
+  ok((await A.get(`/presentations/${sem.id}`)).data.slides.some((x) => x.kind === 'planta'), 'outra apresentação do mesmo cliente não muda');
+  const pdf1 = path.join(tmp, 'a1b.pdf'); fs.writeFileSync(pdf1, Buffer.from(await (await A.file(`/presentations/${a1.id}/pdf`)).arrayBuffer()));
+  if (has('pdfinfo')) ok(/Pages:\s+3/.test(execFileSync('pdfinfo', [pdf1]).toString()), 'PDF da 01 sem layout: 3 páginas');
+  // duplicar com e sem layout
+  const dS = await A.post(`/presentations/${a1.id}/duplicate`); const dC = await A.post(`/presentations/${sem.id}/duplicate`);
+  ok(!dS.data.slides.some((x) => x.kind === 'planta') && dC.data.slides[1].kind === 'planta', 'duplicar copia a estrutura atual (com e sem layout)');
+  // publicação segue a mesma sequência do PDF
+  const pb = await A.post(`/presentations/${sem.id}/publish`);
+  const docPath = get('SELECT file_path FROM documents WHERE id = ?', pb.doc_id).file_path;
+  if (has('pdfinfo')) ok(/Pages:\s+4/.test(execFileSync('pdfinfo', [path.join(tmp, 'up', docPath)]).toString()), 'PDF publicado no portal com as mesmas 4 páginas (capa, planta, 2 imagens)');
+  const vis = (await C1.get('/portal/overview')).projects[0].showcase.find((m) => m.id === pb.doc_id); ok(!!vis, 'cliente vê a apresentação publicada');
+  // página adicionada sem imagem é apontada
+  ok(SC.emptyPages({ slides: [{ kind: 'capa' }, { kind: 'planta', images: [] }, { kind: 'ambiente', images: [{ doc_id: 1 }] }] }).map((x) => x.index).join() === '1', 'página adicionada sem imagem é indicada antes de exportar/publicar');
 
   server.close();
   origLog(`\n${pass} testes ok, ${failN} falha(s).`);

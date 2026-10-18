@@ -21,11 +21,11 @@ function project(id) {
 function nextNumber(projectId) { return (get('SELECT MAX(number) n FROM presentations WHERE project_id = ?', projectId).n || 0) + 1; }
 
 // dados padrão de uma apresentação nova: capa + planta (pendente) — os ambientes entram conforme as imagens
-function blank(p, number) {
+function blank(p, number, withPlanta = false) {
   const coverDoc = defaultCoverDoc() || 'padrao';
   return { format: '4:3', code: p.code || '', project_name: p.name, number,
     cover: { image: { doc_id: coverDoc, fy: 85, zoom: 1.05 }, veil: 0.7, title: 'Apresentação', subtitle: p.name },
-    slides: S.defaultSlides() };
+    slides: S.defaultSlides(withPlanta) };
 }
 // foto de capa padrão (definida em Configurações › Escritório ou a última usada)
 function defaultCoverDoc() {
@@ -41,11 +41,11 @@ function out(r) {
 }
 function load(id) { const r = get('SELECT * FROM presentations WHERE id = ?', id); if (!r) throw new HttpError(404, 'Apresentação não encontrada.'); return r; }
 
-function create(user, projectId, { duplicateOf } = {}) {
+function create(user, projectId, { duplicateOf, structure } = {}) {
   const p = project(projectId);
   return tx(() => {
     const number = nextNumber(p.id);
-    let data = blank(p, number); let from = null;
+    let data = blank(p, number, structure === 'com_layout'); let from = null; // padrão: capa + imagens do projeto
     if (duplicateOf) {
       const src = load(duplicateOf); if (src.project_id !== p.id) throw new HttpError(400, 'Apresentação de outro projeto.');
       data = { ...J(src.data, {}), number }; from = src.id; // cópia independente (nada é compartilhado com a original)
@@ -57,7 +57,10 @@ function create(user, projectId, { duplicateOf } = {}) {
 }
 function clean(d) {
   const fmt = S.FORMATS[d.format] ? d.format : '4:3';
-  const slides = Array.isArray(d.slides) ? d.slides.slice(0, 300) : S.defaultSlides();
+  // a capa é sempre a primeira página; nenhuma outra página é recriada automaticamente
+  let slides = Array.isArray(d.slides) ? d.slides.slice(0, 300).filter((x) => x && typeof x === 'object') : S.defaultSlides();
+  const cap = slides.findIndex((x) => x.kind === 'capa');
+  if (cap > 0) slides = [slides[cap], ...slides.filter((_, i) => i !== cap)]; else if (cap < 0) slides = [{ id: 'capa', kind: 'capa' }, ...slides];
   return { ...d, format: fmt, slides };
 }
 // salvar com controle de conflito: rev precisa ser a mesma que o editor carregou
@@ -158,7 +161,7 @@ function renderPdf(pres, { timeoutMs = 300000 } = {}) {
 async function publish(user, id, { note } = {}) {
   const r = load(id);
   const data = J(r.data, {});
-  const pend = S.pendencies(data).filter((x) => /Planta|sem imagem/.test(x));
+  const pend = S.pendencies(data);
   const buf = await renderPdf(r);
   const p = project(r.project_id);
   const rel = path.join(new Date().toISOString().slice(0, 7), `apresentacao-${r.id}-${Date.now()}.pdf`);
